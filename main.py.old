@@ -1,0 +1,37 @@
+from anki.collection import Collection
+from bs4 import BeautifulSoup
+
+
+def process_html(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    spans = soup.find_all("span", "larger_font_size")
+    for span in spans:
+        unwrapped = span.unwrap()
+    for span in soup.find_all("span"):
+        if len(span.get_text(strip=True)) == 0:
+            span.extract()
+    new_html = str(soup)
+    return new_html
+
+
+col = Collection("/home/andrewcarterhughes/.local/share/Anki2/Andrew/collection.anki2")
+notes = col.find_notes("deck:Classical")
+for note in notes:
+    note_obj = col.get_note(note)
+    print("UPDATING NOTE: ")
+    print(note_obj)
+    for (name, value) in note_obj.items():
+        if name == "Front" or name == "Back" or name == "Note":
+            print("=============================================================================================================================")
+            print(name)
+            print("=============================================================================================================================")
+            print("------------------")
+            print(value)
+            print("++++++++++++++++++")
+            new_html = process_html(value)
+            note_obj[name] = new_html.strip()
+            print(new_html)
+    col.update_note(note_obj)
+    print("NOTE UPDATED")
+
+col.close()
