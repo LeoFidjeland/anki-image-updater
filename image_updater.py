@@ -43,9 +43,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # KEYS
-PEXELS_API_KEY = "z5h2ZCiUeMtEHSwDaAf3eaAvJyi5zy8VjP0TEbkEDuKhGUfG2mhntysO"
-UNSPLASH_ACCESS_KEY = "M4-Iml3s6p5dPxc5HsW-CwK5nTDjg0NTk6OopkUAwNk"
-FREEPIK_API_KEY = "FPSXd6240c0404d4985409682682f171f6e5"
+PEXELS_API_KEY = os.getenv("PEXELS_KEY", "z5h2ZCiUeMtEHSwDaAf3eaAvJyi5zy8VjP0TEbkEDuKhGUfG2mhntysO")
+UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_KEY", "M4-Iml3s6p5dPxc5HsW-CwK5nTDjg0NTk6OopkUAwNk")
+FREEPIK_API_KEY = os.getenv("FREEPIK_KEY", "FPSXd6240c0404d4985409682682f171f6e5")
 
 def anki_invoke(action, params=None):
     """Helper to communicate with AnkiConnect."""
