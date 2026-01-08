@@ -74,12 +74,12 @@ def validate_keys():
 
 # --- SEARCH PROVIDERS ---
 
-def search_pexels(query, count=1):
+def search_pexels(query, count=1, page=1):
     """Searches Pexels."""
     if not PEXELS_API_KEY: return []
     
     headers = {'Authorization': PEXELS_API_KEY}
-    url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}"
+    url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}&page={page}"
     
     try:
         r = requests.get(url, headers=headers)
@@ -99,13 +99,12 @@ def search_pexels(query, count=1):
         logger.warning(f"Error searching Pexels for '{query}': {e}")
         return []
 
-def search_unsplash(query, count=1):
+def search_unsplash(query, count=1, page=1):
     """Searches Unsplash."""
     if not UNSPLASH_ACCESS_KEY: return []
     
-    # Unsplash requires Client-ID in Authorization header or query param
     headers = {'Authorization': f'Client-ID {UNSPLASH_ACCESS_KEY}'}
-    url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}"
+    url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}&page={page}"
     
     try:
         r = requests.get(url, headers=headers)
@@ -116,7 +115,7 @@ def search_unsplash(query, count=1):
             for photo in data['results']:
                 results.append({
                     'thumb': photo['urls']['small'],
-                    'full': photo['urls']['raw'], # or 'regular'/'full'
+                    'full': photo['urls']['raw'],
                     'context_url': photo['links']['html'],
                     'provider': 'unsplash'
                 })
@@ -125,13 +124,12 @@ def search_unsplash(query, count=1):
         logger.warning(f"Error searching Unsplash for '{query}': {e}")
         return []
 
-def search_freepik(query, count=1):
+def search_freepik(query, count=1, page=1):
     """Searches Freepik."""
     if not FREEPIK_API_KEY: return []
     
     headers = {'x-freepik-api-key': FREEPIK_API_KEY}
-    # Using the resources endpoint - Freepik API shape can vary, assuming new API
-    url = f"https://api.freepik.com/v1/resources?term={query}&limit={count}"
+    url = f"https://api.freepik.com/v1/resources?term={query}&limit={count}&page={page}"
     
     try:
         r = requests.get(url, headers=headers)
@@ -140,11 +138,10 @@ def search_freepik(query, count=1):
         results = []
         if data.get('data'):
             for item in data['data']:
-                # Freepik structure check
                 if 'image' in item and 'source' in item['image']:
                      results.append({
-                        'thumb': item['image']['source']['url'], # Preview
-                        'full': item['image']['source']['url'],  # Freepik often has one main URL
+                        'thumb': item['image']['source']['url'],
+                        'full': item['image']['source']['url'],
                         'context_url': item.get('url', '#'),
                         'provider': 'freepik'
                     })
@@ -183,30 +180,45 @@ class CardManager:
         self.current_old_image_b64 = None
         
         # State
-        self.current_provider = 'pexels' # Default
+        self.current_provider = 'pexels'
+        self.current_page = 1
+        self.loaded_images = []
         
         # UI Elements
         self.status_label = None
         self.main_container = None
         self.results_area = None
     
+    def fetch_decks(self):
+        return anki_invoke("deckNames") or []
+
+    def start_deck_load(self, deck_name):
+        self.args.deck = deck_name
+        self.load_cards()
+
     def load_cards(self):
         logger.info(f"Scanning deck: {self.args.deck}")
         try:
-            self.note_ids = anki_invoke("findNotes", {"query": f'deck:"{self.args.deck}"'})
+            # We fetch ALL cards, then filter manually
+            # We also exclude cards that are already tagged as auto-skipped
+            query = f'deck:"{self.args.deck}" -tag:auto-skipped'
+            self.note_ids = anki_invoke("findNotes", {"query": query})
+            
             if not self.note_ids:
-                ui.notify(f"No cards found in deck '{self.args.deck}'", type='warning')
+                ui.notify(f"No cards found (or all skipped/processed) in '{self.args.deck}'", type='warning')
                 return
-            ui.notify(f"Found {len(self.note_ids)} cards.", type='positive')
+            
+            ui.notify(f"Found {len(self.note_ids)} candidates. Filtering...", type='info')
+            self.current_index = -1
             self.next_card()
-        except:
-            ui.notify("Error connecting to Anki. Is it running?", type='negative')
+        except Exception as e:
+            ui.notify(f"Error: {e}", type='negative')
 
     def next_card(self):
         self.current_index += 1
         if self.current_index >= len(self.note_ids):
             ui.notify("All cards processed!", type='positive')
-            if self.status_label: self.status_label.set_text("All Done! Check the Anki Browser.")
+            if self.status_label: self.status_label.set_text("All Done!")
             if self.main_container: self.main_container.clear()
             return
 
@@ -218,6 +230,15 @@ class CardManager:
 
         self.current_note = notes_info[0]
         fields = self.current_note['fields']
+        
+        # INTELLIGENCE FILTERING
+        # 1. Check if Source field is already populated
+        source_val = fields.get(self.args.field_source, {}).get('value', '').strip()
+        if source_val:
+            logger.info(f"Skipping {note_id}: Source already exists.")
+            self.next_card()
+            return
+
         raw_term = fields.get(self.args.field_term, {}).get('value', '')
         self.current_term = raw_term.split('<')[0].strip()
         
@@ -236,17 +257,28 @@ class CardManager:
             self.next_card()
             return
 
+        # Reset pagination/images for new card
+        self.current_page = 1
+        self.loaded_images = []
         self.refresh_ui_content()
 
     def set_provider(self, provider):
         self.current_provider = provider
+        self.current_page = 1 # Reset page on provider switch
+        self.loaded_images = []
         ui.notify(f"Switched to {provider.capitalize()}")
         self.refresh_ui_content()
+
+    def load_more_images(self):
+        self.current_page += 1
+        ui.notify(f"Loading page {self.current_page}...", type='info')
+        self.refresh_results(append=True)
 
     def refresh_ui_content(self):
         """Refreshes the entire card view."""
         if self.status_label:
-            self.status_label.set_text(f"Card {self.current_index + 1}/{len(self.note_ids)}: {self.current_term}")
+            count_remaining = len(self.note_ids) - self.current_index
+            self.status_label.set_text(f"Processing: {self.current_term} ({count_remaining} left)")
         
         if self.main_container:
             self.main_container.clear()
@@ -257,9 +289,6 @@ class CardManager:
                     
                     def render_provider_btn(provider_name):
                         is_active = self.current_provider == provider_name
-                        # Use Quasar props for reliable coloring
-                        # Active: Blue background, White text
-                        # Inactive: White background, Grey text, Border
                         if is_active:
                             btn_props = 'color=blue-6 text-color=white unelevated'
                         else:
@@ -289,43 +318,60 @@ class CardManager:
                     with ui.column().classes('flex-1'):
                         ui.label(f"Search Results for '{self.current_term}'").classes('text-lg font-semibold mb-2')
                         self.results_area = ui.column().classes('w-full')
-                        self.refresh_results()
+                        self.refresh_results() # Initial load
 
-    def refresh_results(self):
+                # --- Actions ---
+                with ui.row().classes('w-full justify-end mt-6 pt-4 border-t border-gray-100'):
+                    ui.button("Skip Card", on_click=self.skip_card) \
+                        .props('color=grey-5 flat icon=skip_next') \
+                        .classes('font-bold')
+
+    def refresh_results(self, append=False):
         """Refreshes just the search results grid."""
         if not self.results_area: return
         
-        self.results_area.clear()
+        # If not appending, clear stored images (logic handled in callers usually, but double check)
+        if not append:
+            self.loaded_images = []
+            self.results_area.clear()
+        
         with self.results_area:
-            ui.label(f"Loading from {self.current_provider.capitalize()}...").classes('animate-pulse text-blue-500')
+            if not self.loaded_images and not append:
+                ui.label(f"Loading from {self.current_provider.capitalize()}...").classes('animate-pulse text-blue-500')
 
             def fetch_and_show():
+                # If appending, we are running inside the existing results_area context?
+                # Actually NiceGUI builders append to the CURRENT context.
+                # So we verify we are in the right place.
+                
+                new_images = []
+                if self.current_provider == 'pexels':
+                    new_images = search_pexels(self.current_term, count=self.args.count, page=self.current_page)
+                elif self.current_provider == 'unsplash':
+                    new_images = search_unsplash(self.current_term, count=self.args.count, page=self.current_page)
+                elif self.current_provider == 'freepik':
+                    new_images = search_freepik(self.current_term, count=self.args.count, page=self.current_page)
+
+                if not new_images:
+                    ui.notify(f"No more results on {self.current_provider.capitalize()}.", type='warning')
+                    return
+
+                self.loaded_images.extend(new_images)
+                
+                # We need to rebuild the grid or append to it. Rebuilding is safer for layout.
                 self.results_area.clear()
                 with self.results_area:
-                    images = []
-                    if self.current_provider == 'pexels':
-                        images = search_pexels(self.current_term, count=self.args.count)
-                    elif self.current_provider == 'unsplash':
-                        images = search_unsplash(self.current_term, count=self.args.count)
-                    elif self.current_provider == 'freepik':
-                        images = search_freepik(self.current_term, count=self.args.count)
-
-                    if not images:
-                        ui.label(f"No results found on {self.current_provider.capitalize()}.").classes('text-red-500')
-                        # Hint if key is missing
-                        if self.current_provider == 'unsplash' and not UNSPLASH_ACCESS_KEY:
-                            ui.label("(Missing UNSPLASH_ACCESS_KEY)").classes('text-sm text-gray-400')
-                        if self.current_provider == 'freepik' and not FREEPIK_API_KEY:
-                            ui.label("(Missing FREEPIK_API_KEY)").classes('text-sm text-gray-400')
-                        return
-                    
                     with ui.grid(columns=3).classes('w-full gap-4'):
-                        for img in images:
+                        for img in self.loaded_images:
                             with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 transition-all p-0') as card:
                                 ui.image(img['thumb']).classes('h-48 w-full object-cover')
-                                # Tooltip or label for provider could go here
                                 card.on('click', lambda _, i=img: self.select_image(i))
-            
+                    
+                    # Load More Button
+                    ui.button("Load More Results", on_click=self.load_more_images) \
+                        .classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
+
+            # Run async refetch
             ui.timer(0.1, fetch_and_show, once=True)
 
     def select_image(self, img_data):
@@ -348,10 +394,6 @@ class CardManager:
             "data": image_b64
         })
 
-        fields = self.current_note['fields']
-        current_notes = fields.get(self.args.field_notes, {}).get('value', '')
-
-        # Update fields
         new_source_content = img_data['context_url']
         new_image_content = f'<img src="{filename}">'
 
@@ -361,35 +403,35 @@ class CardManager:
                 "fields": {
                     self.args.field_image: new_image_content,
                     self.args.field_source: new_source_content,
-                    # self.args.field_notes: current_notes # Keeping notes as is
                 }
             }
         }
         
         anki_invoke("updateNoteFields", update_payload)
         
-        # Tagging
-        tags_to_add = [self.args.tag, f"updated-{provider}"]
+        # AUTO-REPLACED TAG
+        tags_to_add = ["auto-replaced", f"updated-{provider}"]
         anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": " ".join(tags_to_add)})
 
         ui.notify(f"Updated '{clean_term}'!", type='positive')
         self.next_card()
 
     def skip_card(self):
-        tag = f"skipped-{self.current_provider}"
+        # AUTO-SKIPPED TAG
+        tag = "auto-skipped"
         anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": tag})
-        ui.notify(f"Skipped '{self.current_term}' ({tag})", type='warning')
+        ui.notify(f"Skipped '{self.current_term}'", type='warning')
         self.next_card()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Anki Image Fetcher GUI")
-    parser.add_argument("--deck", default=DEFAULT_DECK_NAME)
+    # Deck is now optional/selectable
+    parser.add_argument("--deck", default=None)
     parser.add_argument("--field-term", default=DEFAULT_FIELD_SEARCH)
     parser.add_argument("--field-image", default=DEFAULT_FIELD_IMAGE)
     parser.add_argument("--field-source", default=DEFAULT_FIELD_SOURCE)
     parser.add_argument("--field-notes", default=DEFAULT_FIELD_NOTES)
-    parser.add_argument("--tag", default=DEFAULT_TAG)
     parser.add_argument("--count", type=int, default=DEFAULT_IMAGES_PER_TERM)
     
     args = parser.parse_args()
@@ -403,7 +445,7 @@ def main():
     with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
         # Header
         with ui.row().classes('w-full justify-between items-center mb-4'):
-            ui.label("Anki Image Selector (Multi-Provider)").classes('text-2xl font-bold')
+            ui.label("Anki Image Selector (Smart)").classes('text-2xl font-bold')
             manager.status_label = ui.label("Ready to start...").classes('text-xl text-blue-600 font-semibold')
         
         # Main Area
@@ -411,8 +453,30 @@ def main():
         
         # Footer Controls
         with ui.row().classes('w-full justify-end mt-4 gap-4'):
-            ui.button("Start / Load Cards", on_click=manager.load_cards).classes('bg-green-600')
-            ui.button("Skip Card", on_click=manager.skip_card).classes('bg-gray-500')
+             # If no deck provided, we just start by showing deck selector (logic handled inside)
+             # But buttons are global. We'll update them dynamically or just have them constantly.
+             pass # Controls are now dynamic or inside main_container for the flow
+        
+        # Initialize
+        if args.deck:
+            # If deck was passed via CLI, start immediately
+            with manager.main_container:
+                 ui.button("Start Processing", on_click=lambda: manager.load_cards()).classes('bg-green-600')
+        else:
+            # Show Deck Selector
+            with manager.main_container:
+                ui.label("Select a Deck to Begin:").classes('text-lg mb-2')
+                decks = manager.fetch_decks()
+                if decks:
+                    select = ui.select(decks, label="Deck").classes('w-1/2')
+                    ui.button("Start", on_click=lambda: manager.start_deck_load(select.value)).classes('bg-blue-600 mt-4')
+                else:
+                    ui.label("Could not fetch decks. Is Anki running?").classes('text-red-500')
+        
+        # Global Footer for Skip (only visible when processing effectively)
+        # We can re-inject this button in load_cards or leave it here but disable it?
+        # Simpler: Clear main_container content and inject appropriate views.
+        # So "Skip" should be injected by update_ui/load_cards, not static here.
 
     ui.run(title="Anki Image Updater", reload=False, dark=False)
 
