@@ -19,8 +19,7 @@ DEFAULT_FIELD_IMAGE = "Image"
 DEFAULT_FIELD_SOURCE = "Image Source"
 DEFAULT_FIELD_NOTES = "Notes"
 DEFAULT_IMAGES_PER_TERM = 5
-DEFAULT_TAG = "pexels-updated"
-DEFAULT_TAG_SKIPPED = "skipped-pexels"
+DEFAULT_TAG = "replaced-auto" # Generic tag
 ANKI_URL = "http://localhost:8765"
 # ==========================================================
 
@@ -35,7 +34,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "YOUR_PEXELS_API_KEY_HERE")
+# KEYS
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
+UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
+FREEPIK_API_KEY = os.getenv("FREEPIK_API_KEY")
 
 def anki_invoke(action, params=None):
     """Helper to communicate with AnkiConnect."""
@@ -56,19 +58,27 @@ def anki_invoke(action, params=None):
         logger.error(f"Error invoking Anki method '{action}': {e}")
         return None
 
-def validate_api_key(api_key):
-    """Checks if the API key is set."""
-    if not api_key or "YOUR_PEXELS" in api_key:
-        print("❌ ERROR: Pexels API Key is required.")
+def validate_keys():
+    """Warns about missing keys."""
+    missing = []
+    if not PEXELS_API_KEY: missing.append("PEXELS_API_KEY")
+    if not UNSPLASH_ACCESS_KEY: missing.append("UNSPLASH_ACCESS_KEY")
+    if not FREEPIK_API_KEY: missing.append("FREEPIK_API_KEY")
+    
+    if len(missing) == 3:
+        print("❌ ERROR: No API keys found. Please set at least one in .env")
         return False
+    elif missing:
+        print(f"⚠️ Warning: Some keys are missing: {', '.join(missing)}")
     return True
 
-def search_pexels(query, api_key, count=1):
-    """Searches Pexels. Returns list of dicts: {'thumb': url, 'full': url}."""
-    if not api_key or "YOUR_PEXELS" in api_key:
-        return []
+# --- SEARCH PROVIDERS ---
 
-    headers = {'Authorization': api_key}
+def search_pexels(query, count=1):
+    """Searches Pexels."""
+    if not PEXELS_API_KEY: return []
+    
+    headers = {'Authorization': PEXELS_API_KEY}
     url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}"
     
     try:
@@ -76,17 +86,72 @@ def search_pexels(query, api_key, count=1):
         r.raise_for_status()
         data = r.json()
         results = []
-        if data['photos']:
+        if data.get('photos'):
             for photo in data['photos']:
                 results.append({
                     'thumb': photo['src']['medium'],
-                    'full': photo['src']['original'],  # Full resolution
-                    'context_url': photo['url'] # Pexels page URL
+                    'full': photo['src']['original'],
+                    'context_url': photo['url'],
+                    'provider': 'pexels'
                 })
         return results
     except Exception as e:
         logger.warning(f"Error searching Pexels for '{query}': {e}")
-    return []
+        return []
+
+def search_unsplash(query, count=1):
+    """Searches Unsplash."""
+    if not UNSPLASH_ACCESS_KEY: return []
+    
+    # Unsplash requires Client-ID in Authorization header or query param
+    headers = {'Authorization': f'Client-ID {UNSPLASH_ACCESS_KEY}'}
+    url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}"
+    
+    try:
+        r = requests.get(url, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        results = []
+        if data.get('results'):
+            for photo in data['results']:
+                results.append({
+                    'thumb': photo['urls']['small'],
+                    'full': photo['urls']['raw'], # or 'regular'/'full'
+                    'context_url': photo['links']['html'],
+                    'provider': 'unsplash'
+                })
+        return results
+    except Exception as e:
+        logger.warning(f"Error searching Unsplash for '{query}': {e}")
+        return []
+
+def search_freepik(query, count=1):
+    """Searches Freepik."""
+    if not FREEPIK_API_KEY: return []
+    
+    headers = {'x-freepik-api-key': FREEPIK_API_KEY}
+    # Using the resources endpoint - Freepik API shape can vary, assuming new API
+    url = f"https://api.freepik.com/v1/resources?term={query}&limit={count}"
+    
+    try:
+        r = requests.get(url, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        results = []
+        if data.get('data'):
+            for item in data['data']:
+                # Freepik structure check
+                if 'image' in item and 'source' in item['image']:
+                     results.append({
+                        'thumb': item['image']['source']['url'], # Preview
+                        'full': item['image']['source']['url'],  # Freepik often has one main URL
+                        'context_url': item.get('url', '#'),
+                        'provider': 'freepik'
+                    })
+        return results
+    except Exception as e:
+        logger.warning(f"Error searching Freepik for '{query}': {e}")
+        return []
 
 def download_image_as_base64(url):
     """Downloads an image URL and converts it to base64 for Anki."""
@@ -117,8 +182,13 @@ class CardManager:
         self.current_term = ""
         self.current_old_image_b64 = None
         
+        # State
+        self.current_provider = 'pexels' # Default
+        
+        # UI Elements
         self.status_label = None
         self.main_container = None
+        self.results_area = None
     
     def load_cards(self):
         logger.info(f"Scanning deck: {self.args.deck}")
@@ -151,8 +221,7 @@ class CardManager:
         raw_term = fields.get(self.args.field_term, {}).get('value', '')
         self.current_term = raw_term.split('<')[0].strip()
         
-        # Extract old image filename if present
-        # Looks like: <img src="paste-123.jpg">
+        # Extract old image
         self.current_old_image_b64 = None
         old_img_html = fields.get(self.args.field_image, {}).get('value', '')
         match = re.search(r'src="([^"]+)"', old_img_html)
@@ -167,15 +236,44 @@ class CardManager:
             self.next_card()
             return
 
-        self.update_ui()
+        self.refresh_ui_content()
 
-    def update_ui(self):
+    def set_provider(self, provider):
+        self.current_provider = provider
+        ui.notify(f"Switched to {provider.capitalize()}")
+        self.refresh_ui_content()
+
+    def refresh_ui_content(self):
+        """Refreshes the entire card view."""
         if self.status_label:
             self.status_label.set_text(f"Card {self.current_index + 1}/{len(self.note_ids)}: {self.current_term}")
         
         if self.main_container:
             self.main_container.clear()
             with self.main_container:
+                # Top Controls: Provider Toggle
+                with ui.row().classes('w-full justify-center mb-4 gap-2'):
+                    ui.label("Provider:").classes('py-2 font-bold text-gray-600')
+                    
+                    def render_provider_btn(provider_name):
+                        is_active = self.current_provider == provider_name
+                        # Use Quasar props for reliable coloring
+                        # Active: Blue background, White text
+                        # Inactive: White background, Grey text, Border
+                        if is_active:
+                            btn_props = 'color=blue-6 text-color=white unelevated'
+                        else:
+                            btn_props = 'color=white text-color=grey-9 outline'
+                            
+                        ui.button(provider_name.capitalize(), 
+                                 on_click=lambda: self.set_provider(provider_name)) \
+                                 .props(btn_props) \
+                                 .classes('px-4 font-bold')
+
+                    render_provider_btn('pexels')
+                    render_provider_btn('unsplash')
+                    render_provider_btn('freepik')
+
                 # Layout: Split into "Current" (Left) and "New" (Right/Grid)
                 with ui.row().classes('w-full gap-4'):
                     
@@ -190,70 +288,72 @@ class CardManager:
                     # --- Right: New Options ---
                     with ui.column().classes('flex-1'):
                         ui.label(f"Search Results for '{self.current_term}'").classes('text-lg font-semibold mb-2')
-                        
-                        # Container for async results
-                        results_container = ui.column().classes('w-full')
-                        
-                        with results_container:
-                            ui.label("Loading from Pexels...").classes('animate-pulse text-blue-500')
+                        self.results_area = ui.column().classes('w-full')
+                        self.refresh_results()
 
-                            def fetch_and_show():
-                                results_container.clear()
-                                with results_container:
-                                    images = search_pexels(self.current_term, PEXELS_API_KEY, count=self.args.count)
-                                    if not images:
-                                        ui.label("No results found.").classes('text-red-500')
-                                        return
-                                    
-                                    with ui.grid(columns=3).classes('w-full gap-4'):
-                                        for img in images:
-                                            with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 transition-all p-0') as card:
-                                                ui.image(img['thumb']).classes('h-48 w-full object-cover')
-                                                # Pass FULL resolution URL to select
-                                                card.on('click', lambda _, i=img: self.select_image(i))
-                            
-                            ui.timer(0.1, fetch_and_show, once=True)
+    def refresh_results(self):
+        """Refreshes just the search results grid."""
+        if not self.results_area: return
+        
+        self.results_area.clear()
+        with self.results_area:
+            ui.label(f"Loading from {self.current_provider.capitalize()}...").classes('animate-pulse text-blue-500')
+
+            def fetch_and_show():
+                self.results_area.clear()
+                with self.results_area:
+                    images = []
+                    if self.current_provider == 'pexels':
+                        images = search_pexels(self.current_term, count=self.args.count)
+                    elif self.current_provider == 'unsplash':
+                        images = search_unsplash(self.current_term, count=self.args.count)
+                    elif self.current_provider == 'freepik':
+                        images = search_freepik(self.current_term, count=self.args.count)
+
+                    if not images:
+                        ui.label(f"No results found on {self.current_provider.capitalize()}.").classes('text-red-500')
+                        # Hint if key is missing
+                        if self.current_provider == 'unsplash' and not UNSPLASH_ACCESS_KEY:
+                            ui.label("(Missing UNSPLASH_ACCESS_KEY)").classes('text-sm text-gray-400')
+                        if self.current_provider == 'freepik' and not FREEPIK_API_KEY:
+                            ui.label("(Missing FREEPIK_API_KEY)").classes('text-sm text-gray-400')
+                        return
+                    
+                    with ui.grid(columns=3).classes('w-full gap-4'):
+                        for img in images:
+                            with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 transition-all p-0') as card:
+                                ui.image(img['thumb']).classes('h-48 w-full object-cover')
+                                # Tooltip or label for provider could go here
+                                card.on('click', lambda _, i=img: self.select_image(i))
+            
+            ui.timer(0.1, fetch_and_show, once=True)
 
     def select_image(self, img_data):
-        """
-        img_data is {'thumb': ..., 'full': ..., 'context_url': ...}
-        """
         url = img_data['full']
-        ui.notify("Downloading full resolution...", type='info')
+        provider = img_data['provider']
+        ui.notify(f"Downloading from {provider}...", type='info')
         
-        # 1. Download
         image_b64 = download_image_as_base64(url)
         if not image_b64:
             ui.notify("Failed to download image", type='negative')
             return
 
-        # 2. Prepare Filename
         clean_term = self.current_term
         safe_filename_base = re.sub(r'[^a-zA-Z0-9]', '_', clean_term).strip('_')
         timestamp = int(time.time())
-        filename = f"pexels_{safe_filename_base}_{timestamp}.jpg"
+        filename = f"{provider}_{safe_filename_base}_{timestamp}.jpg"
 
-        # 3. Store Media
         anki_invoke("storeMediaFile", {
             "filename": filename,
             "data": image_b64
         })
 
-        # 4. Update Fields
         fields = self.current_note['fields']
         current_notes = fields.get(self.args.field_notes, {}).get('value', '')
 
-        # Construct new field values
-        # REQUIREMENT: Save only the url ... no html wrapper
-        # REQUIREMENT: source link goes to a site where we can watch the image in its context
+        # Update fields
         new_source_content = img_data['context_url']
-        
-        # REQUIREMENT: remove the old image once a new one is selected, don't move it
-        # So we just ignore the old image content completely.
         new_image_content = f'<img src="{filename}">'
-        
-        # Notes remain as they were (append nothing)
-        new_notes_content = current_notes
 
         update_payload = {
             "note": {
@@ -261,21 +361,24 @@ class CardManager:
                 "fields": {
                     self.args.field_image: new_image_content,
                     self.args.field_source: new_source_content,
-                    self.args.field_notes: new_notes_content
+                    # self.args.field_notes: current_notes # Keeping notes as is
                 }
             }
         }
         
         anki_invoke("updateNoteFields", update_payload)
-        anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": self.args.tag})
+        
+        # Tagging
+        tags_to_add = [self.args.tag, f"updated-{provider}"]
+        anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": " ".join(tags_to_add)})
 
         ui.notify(f"Updated '{clean_term}'!", type='positive')
         self.next_card()
 
     def skip_card(self):
-        # REQUIREMENT: tax the skipped cards (tag)
-        anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": DEFAULT_TAG_SKIPPED})
-        ui.notify(f"Skipped and tagged '{self.current_term}'", type='warning')
+        tag = f"skipped-{self.current_provider}"
+        anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": tag})
+        ui.notify(f"Skipped '{self.current_term}' ({tag})", type='warning')
         self.next_card()
 
 
@@ -291,7 +394,7 @@ def main():
     
     args = parser.parse_args()
     
-    if not validate_api_key(PEXELS_API_KEY):
+    if not validate_keys():
         return
 
     manager = CardManager(args)
@@ -300,7 +403,7 @@ def main():
     with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
         # Header
         with ui.row().classes('w-full justify-between items-center mb-4'):
-            ui.label("Anki Image Selector (High-Res)").classes('text-2xl font-bold')
+            ui.label("Anki Image Selector (Multi-Provider)").classes('text-2xl font-bold')
             manager.status_label = ui.label("Ready to start...").classes('text-xl text-blue-600 font-semibold')
         
         # Main Area
