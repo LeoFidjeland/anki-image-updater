@@ -1,12 +1,19 @@
+import sys
+import os
+
+# FIX: Force loading nicegui from extracted folder (MEIPASS) so __file__ points to real path
+if getattr(sys, 'frozen', False):
+    sys.path.insert(0, sys._MEIPASS)
+
 import requests
 import json
 import base64
-import os
 import time
 import argparse
 import re
 import logging
 from dotenv import load_dotenv
+import nicegui
 from nicegui import ui, app
 
 # Load environment variables
@@ -451,7 +458,7 @@ class CardManager:
         self.next_card()
 
 
-def main():
+def parse_arguments():
     parser = argparse.ArgumentParser(description="Anki Image Fetcher GUI")
     # Deck is now optional/selectable
     parser.add_argument("--deck", default=None)
@@ -460,10 +467,14 @@ def main():
     parser.add_argument("--field-source", default=DEFAULT_FIELD_SOURCE)
     parser.add_argument("--field-notes", default=DEFAULT_FIELD_NOTES)
     parser.add_argument("--count", type=int, default=DEFAULT_IMAGES_PER_TERM)
-    
-    args = parser.parse_args()
+    return parser.parse_args()
+
+@ui.page('/')
+def index_page():
+    args = parse_arguments()
     
     if not validate_keys():
+        ui.label("Error: API Keys missing in .env or script.").classes('text-red-500 text-xl')
         return
 
     manager = CardManager(args)
@@ -480,9 +491,7 @@ def main():
         
         # Footer Controls
         with ui.row().classes('w-full justify-end mt-4 gap-4'):
-             # If no deck provided, we just start by showing deck selector (logic handled inside)
-             # But buttons are global. We'll update them dynamically or just have them constantly.
-             pass # Controls are now dynamic or inside main_container for the flow
+             pass 
         
         # Initialize
         if args.deck:
@@ -499,13 +508,21 @@ def main():
                     ui.button("Start", on_click=lambda: manager.start_deck_load(select.value)).classes('bg-blue-600 mt-4')
                 else:
                     ui.label("Could not fetch decks. Is Anki running?").classes('text-red-500')
-        
-        # Global Footer for Skip (only visible when processing effectively)
-        # We can re-inject this button in load_cards or leave it here but disable it?
-        # Simpler: Clear main_container content and inject appropriate views.
-        # So "Skip" should be injected by update_ui/load_cards, not static here.
 
+def start_app():
+    # reload=False is critical for freezing. 
+    # native=False starts browser. 
     ui.run(title="Anki Image Updater", reload=False, dark=False)
 
-if __name__ == "__main__":
-    main()
+if __name__ in {"__main__", "__mp_main__"}:
+    import multiprocessing
+    import sys
+    import os
+    multiprocessing.freeze_support() 
+    
+    # PyInstaller Fix: nicegui assets
+    if getattr(sys, 'frozen', False):
+         # Already handled by sys.path hack at top of file, but good to ensure everything is initialized
+         pass
+
+    start_app()
