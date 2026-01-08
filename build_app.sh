@@ -14,8 +14,7 @@ rm -rf build dist *.spec
 
 ./venv/bin/pyinstaller \
     --name "Anki Image Updater" \
-    --onefile \
-    --windowed \
+    --onedir \
     --add-data "$(./venv/bin/python -c 'import nicegui; import os; print(os.path.dirname(nicegui.__file__))'):nicegui" \
     image_updater.py
 

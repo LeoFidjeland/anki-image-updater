@@ -14,7 +14,8 @@ import re
 import logging
 from dotenv import load_dotenv
 import nicegui
-from nicegui import ui, app
+from nicegui import ui, app, client
+
 
 # Load environment variables
 load_dotenv()
@@ -510,9 +511,41 @@ def index_page():
                     ui.label("Could not fetch decks. Is Anki running?").classes('text-red-500')
 
 def start_app():
+    import asyncio
+    import webbrowser
+    
+    # Shutdown Strategy: Exit when no clients are connected (tab closed)
+    async def check_shutdown():
+        # NiceGUI keeps clients alive for 3.0s by default to allow page refresh.
+        # We wait slightly longer to see if it was a refresh or a close.
+        print("🔌 Client disconnected. Waiting 4s to see if it's a refresh...", flush=True)
+        await asyncio.sleep(4.0)
+        
+        # Check active clients in Client.instances
+        count = len(client.Client.instances)
+        print(f"👀 Active clients after wait: {count}", flush=True)
+        if count == 0:
+            print("❌ No clients connected. Shutting down server...", flush=True)
+            app.shutdown()
+        else:
+            print("✅ Client reconnected (or other tabs open). Staying alive.", flush=True)
+            
+    app.on_disconnect(lambda: asyncio.create_task(check_shutdown()))
+
+    # Explicitly open browser since show=True can be flaky in frozen apps
+    def open_browser():
+        webbrowser.open("http://localhost:8080/")
+    
+    app.on_startup(open_browser)
+
+    print("🚀 Server starting on http://localhost:8080...", flush=True)
+    
     # reload=False is critical for freezing. 
-    # native=False starts browser. 
-    ui.run(title="Anki Image Updater", reload=False, dark=False)
+    # show=False because we handle it manually above to be safe
+    ui.run(title="Anki Image Updater", reload=False, dark=False, show=False)
+    
+    print("👋 Application closed. You can close this terminal.", flush=True)
+    sys.exit(0)
 
 if __name__ in {"__main__", "__mp_main__"}:
     import multiprocessing
