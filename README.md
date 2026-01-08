@@ -38,7 +38,7 @@ A graphical tool to help you find and update images for your Anki cards using Pe
 
 ### Running from Source
 ```bash
-python3 image_updater.py
+python image_updater.py
 ```
 This will launch a terminal window and automatically open your default browser to the application interface.
 
