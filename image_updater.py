@@ -18,7 +18,7 @@ DEFAULT_FIELD_SEARCH = "English"
 DEFAULT_FIELD_IMAGE = "Image"
 DEFAULT_FIELD_SOURCE = "Image Source"
 DEFAULT_FIELD_NOTES = "Notes"
-DEFAULT_IMAGES_PER_TERM = 5
+DEFAULT_IMAGES_PER_TERM = 6
 DEFAULT_TAG = "replaced-auto" # Generic tag
 ANKI_URL = "http://localhost:8765"
 # ==========================================================
@@ -312,19 +312,21 @@ class CardManager:
                     
                     # --- Left: Old Image & Context ---
                     with ui.card().classes('w-1/4 min-w-[200px] p-2 bg-gray-50'):
-                        ui.label("Current Image").classes('text-sm font-bold text-gray-500 mb-2')
-                        if self.current_old_image_b64:
-                            ui.image(self.current_old_image_b64).classes('w-full rounded mb-4')
-                        else:
-                            ui.label("No Image").classes('text-gray-400 italic text-center py-10 mb-4')
-                        
                         # Context Info (Tibetan)
                         # We try to find a field that looks like Tibetan or just the first non-English field
                         # For now, let's explicitly look for 'Tibetan' as requested, or fallback to showing everything relevant
                         tibetan_val = self.current_note['fields'].get('Tibetan', {}).get('value', '')
                         if tibetan_val:
                              ui.label("Tibetan:").classes('text-xs font-bold text-gray-500 mt-2')
-                             ui.html(tibetan_val, sanitize=False).classes('text-xl text-center my-2 text-purple-800')
+                             ui.html(tibetan_val, sanitize=False).classes('text-2xl text-center my-2 text-purple-800')
+
+                        ui.label("Current Image").classes('text-sm font-bold text-gray-500 mb-2')
+                        if self.current_old_image_b64:
+                            ui.image(self.current_old_image_b64).classes('w-full rounded mb-4')
+                        else:
+                            ui.label("No Image").classes('text-gray-400 italic text-center py-10 mb-4')
+                        
+                        
 
                     # --- Right: New Options ---
                     with ui.column().classes('flex-1'):
