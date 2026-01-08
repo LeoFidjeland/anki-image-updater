@@ -170,6 +170,10 @@ def get_anki_image_base64(filename):
         logger.error(f"Failed to retrieve media file '{filename}': {e}")
     return None
 
+def notify(msg, type='info'):
+    """Wrapper for ui.notify with standard position."""
+    ui.notify(msg, type=type, position='bottom-left')
+
 class CardManager:
     def __init__(self, args):
         self.args = args
@@ -205,19 +209,19 @@ class CardManager:
             self.note_ids = anki_invoke("findNotes", {"query": query})
             
             if not self.note_ids:
-                ui.notify(f"No cards found (or all skipped/processed) in '{self.args.deck}'", type='warning')
+                notify(f"No cards found (or all skipped/processed) in '{self.args.deck}'", type='warning')
                 return
             
-            ui.notify(f"Found {len(self.note_ids)} candidates. Filtering...", type='info')
+            notify(f"Found {len(self.note_ids)} candidates. Filtering...", type='info')
             self.current_index = -1
             self.next_card()
         except Exception as e:
-            ui.notify(f"Error: {e}", type='negative')
+            notify(f"Error: {e}", type='negative')
 
     def next_card(self):
         self.current_index += 1
         if self.current_index >= len(self.note_ids):
-            ui.notify("All cards processed!", type='positive')
+            notify("All cards processed!", type='positive')
             if self.status_label: self.status_label.set_text("All Done!")
             if self.main_container: self.main_container.clear()
             return
@@ -266,12 +270,12 @@ class CardManager:
         self.current_provider = provider
         self.current_page = 1 # Reset page on provider switch
         self.loaded_images = []
-        ui.notify(f"Switched to {provider.capitalize()}")
+        notify(f"Switched to {provider.capitalize()}")
         self.refresh_ui_content()
 
     def load_more_images(self):
         self.current_page += 1
-        ui.notify(f"Loading page {self.current_page}...", type='info')
+        notify(f"Loading page {self.current_page}...", type='info')
         self.refresh_results(append=True)
 
     def refresh_ui_content(self):
@@ -316,15 +320,27 @@ class CardManager:
 
                     # --- Right: New Options ---
                     with ui.column().classes('flex-1'):
-                        ui.label(f"Search Results for '{self.current_term}'").classes('text-lg font-semibold mb-2')
+                        # Header: Search Input + Skip Button
+                        with ui.row().classes('w-full justify-between items-center mb-2'):
+                            
+                            def on_search_change(e):
+                                self.current_term = e.value
+                                # Reset pagination
+                                self.current_page = 1
+                                self.loaded_images = []
+                                self.refresh_results()
+
+                            ui.input(label="Search Query", value=self.current_term) \
+                                .on('keydown.enter', lambda e: on_search_change(e.sender)) \
+                                .props('outlined dense') \
+                                .classes('w-2/3')
+                            
+                            ui.button("Skip Card", on_click=self.skip_card) \
+                                .props('color=grey-5 flat icon=skip_next') \
+                                .classes('font-bold')
+
                         self.results_area = ui.column().classes('w-full')
                         self.refresh_results() # Initial load
-
-                # --- Actions ---
-                with ui.row().classes('w-full justify-end mt-6 pt-4 border-t border-gray-100'):
-                    ui.button("Skip Card", on_click=self.skip_card) \
-                        .props('color=grey-5 flat icon=skip_next') \
-                        .classes('font-bold')
 
     def refresh_results(self, append=False):
         """Refreshes just the search results grid."""
@@ -353,7 +369,7 @@ class CardManager:
                     new_images = search_freepik(self.current_term, count=self.args.count, page=self.current_page)
 
                 if not new_images:
-                    ui.notify(f"No more results on {self.current_provider.capitalize()}.", type='warning')
+                    notify(f"No more results on {self.current_provider.capitalize()}.", type='warning')
                     return
 
                 self.loaded_images.extend(new_images)
@@ -377,17 +393,18 @@ class CardManager:
     def select_image(self, img_data):
         url = img_data['full']
         provider = img_data['provider']
-        ui.notify(f"Downloading from {provider}...", type='info')
+        notify(f"Downloading from {provider}...", type='info')
         
         image_b64 = download_image_as_base64(url)
         if not image_b64:
-            ui.notify("Failed to download image", type='negative')
+            notify("Failed to download image", type='negative')
             return
 
         clean_term = self.current_term
-        safe_filename_base = re.sub(r'[^a-zA-Z0-9]', '_', clean_term).strip('_')
+        # Sanitize filenames a bit more strictly
+        safe_term = re.sub(r'[^a-zA-Z0-9]', '', clean_term)[:20] 
         timestamp = int(time.time())
-        filename = f"{provider}_{safe_filename_base}_{timestamp}.jpg"
+        filename = f"{provider}_{safe_term}_{timestamp}.jpg"
 
         anki_invoke("storeMediaFile", {
             "filename": filename,
@@ -413,14 +430,14 @@ class CardManager:
         tags_to_add = ["auto-replaced", f"updated-{provider}"]
         anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": " ".join(tags_to_add)})
 
-        ui.notify(f"Updated '{clean_term}'!", type='positive')
+        notify(f"Updated '{clean_term}'!", type='positive')
         self.next_card()
 
     def skip_card(self):
         # AUTO-SKIPPED TAG
         tag = "auto-skipped"
         anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": tag})
-        ui.notify(f"Skipped '{self.current_term}'", type='warning')
+        notify(f"Skipped '{self.current_term}'", type='warning')
         self.next_card()
 
 
