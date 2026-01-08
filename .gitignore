@@ -1,13 +1,18 @@
-.DS_Store
-
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 venv/
 .env
-*.log
 
-# PyInstaller / Build Artifacts
-build/
+# PyInstaller
+*.manifest
 *.spec
+build/
 dist/
+
+# Mac
+.DS_Store
+
+# Logs
+*.log
