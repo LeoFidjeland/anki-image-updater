@@ -310,13 +310,21 @@ class CardManager:
                 # Layout: Split into "Current" (Left) and "New" (Right/Grid)
                 with ui.row().classes('w-full gap-4'):
                     
-                    # --- Left: Old Image ---
+                    # --- Left: Old Image & Context ---
                     with ui.card().classes('w-1/4 min-w-[200px] p-2 bg-gray-50'):
                         ui.label("Current Image").classes('text-sm font-bold text-gray-500 mb-2')
                         if self.current_old_image_b64:
-                            ui.image(self.current_old_image_b64).classes('w-full rounded')
+                            ui.image(self.current_old_image_b64).classes('w-full rounded mb-4')
                         else:
-                            ui.label("No Image").classes('text-gray-400 italic text-center py-10')
+                            ui.label("No Image").classes('text-gray-400 italic text-center py-10 mb-4')
+                        
+                        # Context Info (Tibetan)
+                        # We try to find a field that looks like Tibetan or just the first non-English field
+                        # For now, let's explicitly look for 'Tibetan' as requested, or fallback to showing everything relevant
+                        tibetan_val = self.current_note['fields'].get('Tibetan', {}).get('value', '')
+                        if tibetan_val:
+                             ui.label("Tibetan:").classes('text-xs font-bold text-gray-500 mt-2')
+                             ui.html(tibetan_val, sanitize=False).classes('text-xl text-center my-2 text-purple-800')
 
                     # --- Right: New Options ---
                     with ui.column().classes('flex-1'):
@@ -462,7 +470,7 @@ def main():
     with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
         # Header
         with ui.row().classes('w-full justify-between items-center mb-4'):
-            ui.label("Anki Image Selector (Smart)").classes('text-2xl font-bold')
+            ui.label("Anki Image Updater").classes('text-2xl font-bold')
             manager.status_label = ui.label("Ready to start...").classes('text-xl text-blue-600 font-semibold')
         
         # Main Area
