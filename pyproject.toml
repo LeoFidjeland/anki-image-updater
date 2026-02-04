@@ -1,0 +1,33 @@
+[project]
+name = "anki-image-updater"
+version = "0.1.0"
+description = "A GUI tool to update Anki cards with images from Pexels, Unsplash, and Freepik."
+authors = [{name = "Leo Fidjeland", email = "leo@example.com"}]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "nicegui",
+    "requests",
+    "python-dotenv",
+    "platformdirs",
+]
+
+[project.scripts]
+anki_images = "image_updater:start_app"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["image_updater", "config_manager"]

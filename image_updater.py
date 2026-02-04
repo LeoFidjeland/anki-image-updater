@@ -12,22 +12,14 @@ import time
 import argparse
 import re
 import logging
-from dotenv import load_dotenv
+from config_manager import ConfigManager
 import nicegui
 from nicegui import ui, app, client
 
+# Initialize Config
+config = ConfigManager()
 
-# Load environment variables
-load_dotenv()
-
-# ================= CONFIGURATION DEFAULTS =================
-DEFAULT_DECK_NAME = "The Heart of Tibetan Language -  V1"
-DEFAULT_FIELD_SEARCH = "English"
-DEFAULT_FIELD_IMAGE = "Image"
-DEFAULT_FIELD_SOURCE = "Image Source"
-DEFAULT_FIELD_NOTES = "Notes"
-DEFAULT_IMAGES_PER_TERM = 6
-DEFAULT_TAG = "replaced-auto" # Generic tag
+# ================= CONFIGURATION =================
 ANKI_URL = "http://localhost:8765"
 # ==========================================================
 
@@ -42,10 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# KEYS
-PEXELS_API_KEY = os.getenv("PEXELS_KEY", "z5h2ZCiUeMtEHSwDaAf3eaAvJyi5zy8VjP0TEbkEDuKhGUfG2mhntysO")
-UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_KEY", "M4-Iml3s6p5dPxc5HsW-CwK5nTDjg0NTk6OopkUAwNk")
-FREEPIK_API_KEY = os.getenv("FREEPIK_KEY", "FPSXd6240c0404d4985409682682f171f6e5")
+# Note: Keys are now fetched from config_manager via properties/get methods
+
 
 def anki_invoke(action, params=None):
     """Helper to communicate with AnkiConnect."""
@@ -69,24 +59,23 @@ def anki_invoke(action, params=None):
 def validate_keys():
     """Warns about missing keys."""
     missing = []
-    if not PEXELS_API_KEY: missing.append("PEXELS_API_KEY")
-    if not UNSPLASH_ACCESS_KEY: missing.append("UNSPLASH_ACCESS_KEY")
-    if not FREEPIK_API_KEY: missing.append("FREEPIK_API_KEY")
+    if not config.get("PEXELS_API_KEY"): missing.append("PEXELS_API_KEY")
+    if not config.get("UNSPLASH_ACCESS_KEY"): missing.append("UNSPLASH_ACCESS_KEY")
+    if not config.get("FREEPIK_API_KEY"): missing.append("FREEPIK_API_KEY")
     
     if len(missing) == 3:
-        print("❌ ERROR: No API keys found. Please set at least one in .env")
+        # We don't print error anymore, UI handles it
         return False
-    elif missing:
-        print(f"⚠️ Warning: Some keys are missing: {', '.join(missing)}")
     return True
 
 # --- SEARCH PROVIDERS ---
 
 def search_pexels(query, count=1, page=1):
     """Searches Pexels."""
-    if not PEXELS_API_KEY: return []
+    api_key = config.get("PEXELS_API_KEY")
+    if not api_key: return []
     
-    headers = {'Authorization': PEXELS_API_KEY}
+    headers = {'Authorization': api_key}
     url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}&page={page}"
     
     try:
@@ -109,9 +98,10 @@ def search_pexels(query, count=1, page=1):
 
 def search_unsplash(query, count=1, page=1):
     """Searches Unsplash."""
-    if not UNSPLASH_ACCESS_KEY: return []
+    access_key = config.get("UNSPLASH_ACCESS_KEY")
+    if not access_key: return []
     
-    headers = {'Authorization': f'Client-ID {UNSPLASH_ACCESS_KEY}'}
+    headers = {'Authorization': f'Client-ID {access_key}'}
     url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}&page={page}"
     
     try:
@@ -134,9 +124,10 @@ def search_unsplash(query, count=1, page=1):
 
 def search_freepik(query, count=1, page=1):
     """Searches Freepik."""
-    if not FREEPIK_API_KEY: return []
+    api_key = config.get("FREEPIK_API_KEY")
+    if not api_key: return []
     
-    headers = {'x-freepik-api-key': FREEPIK_API_KEY}
+    headers = {'x-freepik-api-key': api_key}
     url = f"https://api.freepik.com/v1/resources?term={query}&limit={count}&page={page}"
     
     try:
@@ -463,11 +454,19 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Anki Image Fetcher GUI")
     # Deck is now optional/selectable
     parser.add_argument("--deck", default=None)
-    parser.add_argument("--field-term", default=DEFAULT_FIELD_SEARCH)
-    parser.add_argument("--field-image", default=DEFAULT_FIELD_IMAGE)
-    parser.add_argument("--field-source", default=DEFAULT_FIELD_SOURCE)
-    parser.add_argument("--field-notes", default=DEFAULT_FIELD_NOTES)
-    parser.add_argument("--count", type=int, default=DEFAULT_IMAGES_PER_TERM)
+    parser.add_argument("--field-term", default=config.get("DEFAULT_FIELD_SEARCH"))
+    parser.add_argument("--field-image", default=config.get("DEFAULT_FIELD_IMAGE"))
+    parser.add_argument("--field-source", default=config.get("DEFAULT_FIELD_SOURCE"))
+    parser.add_argument("--field-notes", default=config.get("DEFAULT_FIELD_NOTES"))
+    
+    # Handle int conversion safely
+    count_val = config.get("DEFAULT_IMAGES_PER_TERM")
+    try:
+        count_val = int(count_val)
+    except (ValueError, TypeError):
+        count_val = 6
+        
+    parser.add_argument("--count", type=int, default=count_val)
     return parser.parse_args()
 
 @ui.page('/')
@@ -475,8 +474,9 @@ def index_page():
     args = parse_arguments()
     
     if not validate_keys():
-        ui.label("Error: API Keys missing in .env or script.").classes('text-red-500 text-xl')
-        return
+        ui.notify("Please configure API keys in Settings", type='warning', close_button=True, timeout=0)
+        # ui.label("Error: API Keys missing in .env or script.").classes('text-red-500 text-xl')
+        # return
 
     manager = CardManager(args)
 
@@ -490,11 +490,40 @@ def index_page():
         # Main Area
         manager.main_container = ui.column().classes('w-full min-h-[500px] border border-gray-200 rounded-lg p-4 bg-white shadow-sm')
         
-        # Footer Controls
-        with ui.row().classes('w-full justify-end mt-4 gap-4'):
-             pass 
-        
         # Initialize
+        
+        # --- Settings Dialog ---
+        with ui.dialog() as settings_dialog, ui.card().classes('w-full max-w-lg'):
+            ui.label('Settings').classes('text-xl font-bold mb-4')
+            
+            with ui.column().classes('w-full gap-2'):
+                ui.label("API Keys").classes('font-bold mt-2')
+                pexels_input = ui.input("Pexels API Key", value=config.get("PEXELS_API_KEY")).props('type=password')
+                unsplash_input = ui.input("Unsplash Access Key", value=config.get("UNSPLASH_ACCESS_KEY")).props('type=password')
+                freepik_input = ui.input("Freepik API Key", value=config.get("FREEPIK_API_KEY")).props('type=password')
+                
+                ui.label("Defaults").classes('font-bold mt-4')
+                deck_input = ui.input("Default Deck Name", value=config.get("DEFAULT_DECK_NAME"))
+                # other fields can be added here as needed
+                
+                with ui.row().classes('w-full justify-end mt-4'):
+                    def save_settings():
+                        config.set("PEXELS_API_KEY", pexels_input.value.strip())
+                        config.set("UNSPLASH_ACCESS_KEY", unsplash_input.value.strip())
+                        config.set("FREEPIK_API_KEY", freepik_input.value.strip())
+                        config.set("DEFAULT_DECK_NAME", deck_input.value.strip())
+                        
+                        ui.notify("Settings Saved!", type='positive')
+                        settings_dialog.close()
+                        # Optional: reload specific things or just let user restart/continue
+                        
+                    ui.button("Cancel", on_click=settings_dialog.close).props('flat')
+                    ui.button("Save", on_click=save_settings).classes('bg-blue-600')
+
+        # Header - settings button
+        with ui.row().classes('absolute top-4 right-4'):
+             ui.button(icon='settings', on_click=settings_dialog.open).props('flat round color=grey-7')
+
         if args.deck:
             # If deck was passed via CLI, start immediately
             with manager.main_container:
