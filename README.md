@@ -15,32 +15,36 @@ A graphical tool to help you find and update images for your Anki cards using Pe
 
 ## Installation
 
-1. Clone the repository or download the source code.
-2. (Optional) Create a virtual environment:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-3. Install dependencies:
+The easiest way to install is using `uv`:
+
+```bash
+uv tool install git+https://github.com/LeoFidjeland/anki-scripts
+```
+
+Once installed, you can run the app with from terminal (mac/linux) /cmd:
+
+```bash
+anki_images
+```
+
+## Development
+
+### Running from Source
+
+1. Clone the repository.
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-4. Configuration:
-   - The app looks for an `.env` file for API keys, OR uses the keys hardcoded in the script (for distributed builds).
-   - If running locally, create a `.env` file with:
-     ```
-     PEXELS_KEY=your_key
-     UNSPLASH_KEY=your_key
-     FREEPIK_KEY=your_key
-     ```
+3. Run the app:
+   ```bash
+   python image_updater.py
+   ```
 
-## Usage
+### Configuration
+The app will prompt you for API keys (Pexels, Unsplash, Freepik) upon first launch. Settings are saved to your user configuration directory.
 
-### Running from Source
-```bash
-python image_updater.py
-```
-This will launch a terminal window and automatically open your default browser to the application interface.
+### Building the App (Standalone)
 
 ### Running the App (Standalone)
 Double-click the `Anki Image Updater` executable in the `dist` folder.
