@@ -184,26 +184,57 @@ class AppUI:
             self._is_navigating = False
 
     def build_settings_dialog(self):
+        cfg = self.logic.config
         with ui.dialog() as settings_dialog, ui.card().classes('w-full max-w-lg'):
-            ui.label('Settings').classes('text-xl font-bold mb-4')
+            ui.label('Settings').classes('text-xl font-bold mb-2')
             with ui.column().classes('w-full gap-2'):
-                ui.label("API Keys").classes('font-bold mt-2')
-                pexels_input = ui.input("Pexels API Key", value=self.logic.config.get("PEXELS_API_KEY")).props('type=password')
-                unsplash_input = ui.input("Unsplash Access Key", value=self.logic.config.get("UNSPLASH_ACCESS_KEY")).props('type=password')
-                freepik_input = ui.input("Freepik API Key", value=self.logic.config.get("FREEPIK_API_KEY")).props('type=password')
-                
-                ui.label("Defaults").classes('font-bold mt-4')
-                deck_input = ui.input("Default Deck Name", value=self.logic.config.get("DEFAULT_DECK_NAME"))
-                
+
+                ui.label("API Keys").classes('text-sm font-bold text-gray-600 mt-2')
+                ui.input("Pexels API Key",      value=cfg.get("PEXELS_API_KEY"),    on_change=lambda e: cfg_vals.__setitem__('pexels',    e.value)).props('type=password outlined dense').classes('w-full')
+                ui.input("Unsplash Access Key", value=cfg.get("UNSPLASH_ACCESS_KEY"), on_change=lambda e: cfg_vals.__setitem__('unsplash', e.value)).props('type=password outlined dense').classes('w-full')
+                ui.input("Freepik API Key",     value=cfg.get("FREEPIK_API_KEY"),   on_change=lambda e: cfg_vals.__setitem__('freepik',   e.value)).props('type=password outlined dense').classes('w-full')
+
+                with ui.expansion("Advanced", icon="tune").classes('w-full mt-2 border rounded'):
+                    with ui.column().classes('w-full gap-2 p-2'):
+                        ui.label("Anki Field Names").classes('text-sm font-bold text-gray-600 mt-1')
+                        ui.input("Search Term Field",  value=cfg.get("DEFAULT_FIELD_SEARCH"), on_change=lambda e: cfg_vals.__setitem__('field_search',  e.value)).props('dense outlined').classes('w-full')
+                        ui.input("Image Field",        value=cfg.get("DEFAULT_FIELD_IMAGE"),  on_change=lambda e: cfg_vals.__setitem__('field_image',   e.value)).props('dense outlined').classes('w-full')
+                        ui.input("Image Source Field", value=cfg.get("DEFAULT_FIELD_SOURCE"), on_change=lambda e: cfg_vals.__setitem__('field_source',  e.value)).props('dense outlined').classes('w-full')
+
+                        ui.label("Behaviour").classes('text-sm font-bold text-gray-600 mt-3')
+                        ui.input("Images per Term", value=str(cfg.get("DEFAULT_IMAGES_PER_TERM", 6)), on_change=lambda e: cfg_vals.__setitem__('images_per_term', e.value)).props('dense outlined type=number').classes('w-full')
+                        ui.input("Tag Added on Save", value=cfg.get("DEFAULT_TAG"), on_change=lambda e: cfg_vals.__setitem__('tag', e.value)).props('dense outlined').classes('w-full')
+
+                        ui.label(f"Config file: {cfg.config_path}").classes('text-xs text-gray-400 mt-2')
+
                 with ui.row().classes('w-full justify-end mt-4'):
+                    # Use a mutable dict so lambdas capture current input values at save time
+                    cfg_vals = {
+                        'pexels':         cfg.get("PEXELS_API_KEY"),
+                        'unsplash':       cfg.get("UNSPLASH_ACCESS_KEY"),
+                        'freepik':        cfg.get("FREEPIK_API_KEY"),
+                        'field_search':   cfg.get("DEFAULT_FIELD_SEARCH"),
+                        'field_image':    cfg.get("DEFAULT_FIELD_IMAGE"),
+                        'field_source':   cfg.get("DEFAULT_FIELD_SOURCE"),
+                        'images_per_term': str(cfg.get("DEFAULT_IMAGES_PER_TERM", 6)),
+                        'tag':            cfg.get("DEFAULT_TAG"),
+                    }
+
                     def save_settings():
-                        self.logic.config.set("PEXELS_API_KEY", pexels_input.value.strip())
-                        self.logic.config.set("UNSPLASH_ACCESS_KEY", unsplash_input.value.strip())
-                        self.logic.config.set("FREEPIK_API_KEY", freepik_input.value.strip())
-                        self.logic.config.set("DEFAULT_DECK_NAME", deck_input.value.strip())
+                        cfg.set("PEXELS_API_KEY",        cfg_vals['pexels'].strip())
+                        cfg.set("UNSPLASH_ACCESS_KEY",   cfg_vals['unsplash'].strip())
+                        cfg.set("FREEPIK_API_KEY",       cfg_vals['freepik'].strip())
+                        cfg.set("DEFAULT_FIELD_SEARCH",  cfg_vals['field_search'].strip())
+                        cfg.set("DEFAULT_FIELD_IMAGE",   cfg_vals['field_image'].strip())
+                        cfg.set("DEFAULT_FIELD_SOURCE",  cfg_vals['field_source'].strip())
+                        cfg.set("DEFAULT_TAG",           cfg_vals['tag'].strip())
+                        try:
+                            cfg.set("DEFAULT_IMAGES_PER_TERM", int(cfg_vals['images_per_term']))
+                        except ValueError:
+                            pass
                         notify("Settings Saved!", type='positive')
                         settings_dialog.close()
-                        
+
                     ui.button("Cancel", on_click=settings_dialog.close).props('flat')
                     ui.button("Save", on_click=save_settings).classes('bg-blue-600')
         return settings_dialog

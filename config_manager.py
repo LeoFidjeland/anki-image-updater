@@ -11,13 +11,11 @@ class ConfigManager:
         "PEXELS_API_KEY": "",
         "UNSPLASH_ACCESS_KEY": "",
         "FREEPIK_API_KEY": "",
-        "DEFAULT_DECK_NAME": "The Heart of Tibetan Language -  V1",
         "DEFAULT_FIELD_SEARCH": "English",
         "DEFAULT_FIELD_IMAGE": "Image",
         "DEFAULT_FIELD_SOURCE": "Image Source",
-        "DEFAULT_FIELD_NOTES": "Notes",
         "DEFAULT_IMAGES_PER_TERM": 6,
-        "DEFAULT_TAG": "replaced-auto"
+        "DEFAULT_TAG": "replaced"
     }
 
     def __init__(self):

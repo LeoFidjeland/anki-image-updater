@@ -27,8 +27,7 @@ class CardManagerLogic:
         self.field_term = self.config.get("DEFAULT_FIELD_SEARCH", "English")
         self.field_image = self.config.get("DEFAULT_FIELD_IMAGE", "Image")
         self.field_source = self.config.get("DEFAULT_FIELD_SOURCE", "Image Source")
-        self.field_notes = self.config.get("DEFAULT_FIELD_NOTES", "Notes")
-        self.tag_auto_replaced = self.config.get("DEFAULT_TAG", "auto-replaced")
+        self.tag_auto_replaced = self.config.get("DEFAULT_TAG", "replaced")
         
         try:
             self.count = int(self.config.get("DEFAULT_IMAGES_PER_TERM", 6))
@@ -157,7 +156,7 @@ class CardManagerLogic:
         
         await self.anki.update_note_fields(note['noteId'], update_fields)
         
-        tags_to_add = [self.tag_auto_replaced, f"updated-{provider}"]
+        tags_to_add = [self.tag_auto_replaced, f"replaced::{provider}"]
         await self.anki.add_tags([note['noteId']], " ".join(tags_to_add))
 
         return term
