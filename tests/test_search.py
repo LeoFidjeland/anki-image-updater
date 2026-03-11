@@ -1,5 +1,5 @@
 import pytest
-from image_updater import search_pexels, search_unsplash, search_freepik
+from anki_image_updater import search_pexels, search_unsplash, search_freepik
 # we import module to patch config inside it if needed, 
 # but image_updater imports config instance. We need to patch that instance.
 
@@ -8,7 +8,7 @@ def test_search_pexels_no_key(mock_config):
     # Ensure key is empty
     mock_config.set("PEXELS_API_KEY", "")
     
-    from image_updater import config
+    from anki_image_updater import config
     # We need to make sure image_updater.config is our mock_config or has the same state.
     # Since we can't easily replace the imported instance in another module with the fixture 
     # (unless we patch image_updater.config), we will use monkeypatch.
@@ -21,7 +21,7 @@ def test_search_pexels_no_key(mock_config):
     
     # Safest way: Patch image_updater.config
     with pytest.MonkeyPatch.context() as m:
-        m.setattr("image_updater.config", mock_config)
+        m.setattr("anki_image_updater.config", mock_config)
         results = search_pexels("test")
         assert results == []
 
@@ -42,7 +42,7 @@ def test_search_pexels_with_key_mocked(mock_config, mock_requests_get):
     }
     
     with pytest.MonkeyPatch.context() as m:
-        m.setattr("image_updater.config", mock_config)
+        m.setattr("anki_image_updater.config", mock_config)
         
         results = search_pexels("test")
         
@@ -60,6 +60,6 @@ def test_search_missing_provider_key(mock_config):
     mock_config.set("FREEPIK_API_KEY", "")
     
     with pytest.MonkeyPatch.context() as m:
-        m.setattr("image_updater.config", mock_config)
+        m.setattr("anki_image_updater.config", mock_config)
         assert search_unsplash("test") == []
         assert search_freepik("test") == []

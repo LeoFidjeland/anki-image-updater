@@ -17,14 +17,16 @@ A graphical tool to help you find and update images for your Anki cards using Pe
 The easiest way to install and run the application globally is using [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install git+https://github.com/LeoFidjeland/anki-scripts
+uv tool install git+https://github.com/LeoFidjeland/anki-image-updater
 ```
 
 Once installed, you can start the application from your terminal:
 
 ```bash
-anki_images
+anki-image-updater
 ```
+
+*(To remove the application later, simply run `uv tool uninstall anki-image-updater`)*
 
 A browser window will open automatically. Wait 4 seconds after closing the tab for the tool to auto-shutdown, or press `Ctrl+C` in your terminal.
 
@@ -34,14 +36,14 @@ If you want to contribute or modify the application, use `uv` to manage the proj
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/LeoFidjeland/anki-scripts.git
-   cd anki-scripts
+   git clone https://github.com/LeoFidjeland/anki-image-updater.git
+   cd anki-image-updater
    ```
 2. Run the application (this automatically creates an isolated virtual environment and installs dependencies):
    ```bash
-   uv run anki_images
+   uv run anki-image-updater
    ```
-   *(Alternatively, you can run `uv run python image_updater.py`)*
+   *(Alternatively, you can run `uv run python anki_image_updater.py`)*
 
 ### Configuration
 The app will prompt you for API keys (Pexels, Unsplash, Freepik) upon first launch. Settings are securely saved to your user configuration directory.

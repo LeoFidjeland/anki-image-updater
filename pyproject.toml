@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-anki_images = "image_updater:start_app"
+anki-image-updater = "anki_image_updater:start_app"
 
 [project.optional-dependencies]
 test = [
@@ -30,4 +30,4 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["image_updater", "config_manager"]
+py-modules = ["anki_image_updater", "config_manager"]
