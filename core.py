@@ -18,7 +18,7 @@ class CardManagerLogic:
         self.config = config
         self.anki = anki
         
-        self.note_ids = []
+        self.valid_notes = []   # Pre-filtered list of notes that need images
         self.current_index = -1
         self.current_note = None
         self.current_term = ""
@@ -36,63 +36,73 @@ class CardManagerLogic:
             self.count = 6
 
     async def load_deck(self, deck_name):
-        """Loads valid cards from a deck and starts processing."""
+        """
+        Loads all cards from a deck in two fast steps:
+        1. find_notes — get IDs (single fast query)
+        2. notesInfo for ALL IDs at once — one HTTP call instead of N
+        Then pre-filters in Python. This avoids per-card HTTP round-trips on startup.
+        """
         logger.info(f"Scanning deck: {deck_name}")
         query = f'deck:"{deck_name}" -tag:auto-skipped'
-        self.note_ids = await self.anki.find_notes(query)
+        all_ids = await self.anki.find_notes(query)
         
-        if not self.note_ids:
-            return False, f"No cards found (or all skipped/processed) in '{deck_name}'"
-        
+        if not all_ids:
+            return False, f"No cards found (or all skipped) in '{deck_name}'"
+
+        logger.info(f"Fetching info for {len(all_ids)} candidates in one batch...")
+        all_notes = await self.anki.get_notes_info(all_ids)
+
+        # Pre-filter in Python — no more per-card HTTP calls during scan
+        self.valid_notes = []
+        for note in all_notes:
+            fields = note['fields']
+            source_val = fields.get(self.field_source, {}).get('value', '').strip()
+            if source_val:
+                continue  # already has an image source
+            raw_term = fields.get(self.field_term, {}).get('value', '')
+            term = raw_term.split('<')[0].strip()
+            if not term:
+                continue  # empty search term
+            self.valid_notes.append(note)
+
+        if not self.valid_notes:
+            return False, f"No cards needing images in '{deck_name}'"
+
         self.current_index = -1
-        return True, f"Found {len(self.note_ids)} candidates. Filtering..."
+        logger.info(f"{len(self.valid_notes)} cards need images.")
+        return True, f"Found {len(self.valid_notes)} cards to process."
 
     def is_finished(self):
         """Returns True if there are no more cards to process."""
-        return self.current_index >= len(self.note_ids)
+        return self.current_index >= len(self.valid_notes)
 
     async def advance_to_next_valid_card(self):
         """
-        Advances the internal pointer until it finds a card that needs processing,
-        or hits the end of the list. Returns True if a card was loaded, False if finished.
+        Advances to the next pre-filtered card. All filtering was done at load time,
+        so this is now O(1) — just looks up the next note and fetches its image preview.
         """
-        while True:
-            self.current_index += 1
-            if self.is_finished():
-                return False
-                
-            note_id = self.note_ids[self.current_index]
-            notes_info = await self.anki.get_notes_info([note_id])
-            if not notes_info:
-                continue
+        self.current_index += 1
+        if self.is_finished():
+            return False
 
-            self.current_note = notes_info[0]
-            fields = self.current_note['fields']
-            
-            # Check if Source field is already populated
-            source_val = fields.get(self.field_source, {}).get('value', '').strip()
-            if source_val:
-                logger.info(f"Skipping {note_id}: Source already exists.")
-                continue
+        self.current_note = self.valid_notes[self.current_index]
+        fields = self.current_note['fields']
 
-            raw_term = fields.get(self.field_term, {}).get('value', '')
-            self.current_term = raw_term.split('<')[0].strip()
-            
-            if not self.current_term:
-                logger.warning(f"Skipping empty term for ID {note_id}")
-                continue
+        raw_term = fields.get(self.field_term, {}).get('value', '')
+        self.current_term = raw_term.split('<')[0].strip()
 
-            # Extract existing image as base64 if there is one
-            self.current_old_image_b64 = None
-            old_img_html = fields.get(self.field_image, {}).get('value', '')
-            match = re.search(r'src="([^"]+)"', old_img_html)
-            if match:
-                filename = match.group(1)
-                b64_data = await self.anki.get_media_file_base64(filename)
-                if b64_data:
-                    self.current_old_image_b64 = f"data:image/jpeg;base64,{b64_data}"
+        # Fetch the existing image preview (still one HTTP call per card, but only
+        # for cards we're actually going to show — not for the thousands we're skipping)
+        self.current_old_image_b64 = None
+        old_img_html = fields.get(self.field_image, {}).get('value', '')
+        match = re.search(r'src="([^"]+)"', old_img_html)
+        if match:
+            filename = match.group(1)
+            b64_data = await self.anki.get_media_file_base64(filename)
+            if b64_data:
+                self.current_old_image_b64 = f"data:image/jpeg;base64,{b64_data}"
 
-            return True
+        return True
 
     async def skip_card(self):
         """Adds auto-skipped tag to the current note."""
@@ -154,6 +164,4 @@ class CardManagerLogic:
 
     def get_remaining_count(self):
         """Returns the number of cards left to process."""
-        if self.current_index == -1:
-             return len(self.note_ids)
-        return max(0, len(self.note_ids) - self.current_index)
+        return max(0, len(self.valid_notes) - self.current_index)

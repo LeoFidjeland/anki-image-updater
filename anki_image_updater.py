@@ -53,9 +53,22 @@ class AppUI:
         await self.load_cards()
 
     async def load_cards(self):
+        # Show loading state immediately (synchronous, before any await)
+        # so the user gets instant feedback instead of a frozen UI.
+        if self.main_container:
+            self.main_container.clear()
+            with self.main_container:
+                ui.label("Scanning deck...").classes('text-blue-500 animate-pulse text-lg py-8')
+        if self.status_label:
+            self.status_label.set_text("Loading...")
+
         success, message = await self.logic.load_deck(self.args.deck)
         if not success:
             notify(message, type='warning')
+            if self.main_container:
+                self.main_container.clear()
+                with self.main_container:
+                    ui.label(f"⚠️ {message}").classes('text-orange-500 text-lg py-8')
             return
         await self.next_card()
 
