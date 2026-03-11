@@ -70,84 +70,86 @@ def validate_keys():
 
 # --- SEARCH PROVIDERS ---
 
+def make_search_request(url, headers):
+    """Centralized helper for API requests that raises explicit auth errors."""
+    try:
+        r = requests.get(url, headers=headers)
+        if r.status_code in (401, 403):
+            raise ValueError("API key is invalid or unauthorized. Please check your settings.")
+        
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.HTTPError as e:
+        # We raised 401s manually, this catches 429, 500, etc.
+        logger.warning(f"HTTP Error: {e}")
+        raise Exception(f"API Error ({r.status_code}): {e}")
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Connection Error: {e}")
+        raise Exception(f"Connection failed: {e}")
+
 def search_pexels(query, count=1, page=1):
     """Searches Pexels."""
     api_key = config.get("PEXELS_API_KEY")
-    if not api_key: return []
+    if not api_key: 
+        raise ValueError("Pexels API key is missing. Please add it in Settings.")
     
     headers = {'Authorization': api_key}
     url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}&page={page}"
     
-    try:
-        r = requests.get(url, headers=headers)
-        r.raise_for_status()
-        data = r.json()
-        results = []
-        if data.get('photos'):
-            for photo in data['photos']:
-                results.append({
-                    'thumb': photo['src']['medium'],
-                    'full': photo['src']['original'],
-                    'context_url': photo['url'],
-                    'provider': 'pexels'
-                })
-        return results
-    except Exception as e:
-        logger.warning(f"Error searching Pexels for '{query}': {e}")
-        return []
+    data = make_search_request(url, headers)
+    results = []
+    if data.get('photos'):
+        for photo in data['photos']:
+            results.append({
+                'thumb': photo['src']['medium'],
+                'full': photo['src']['original'],
+                'context_url': photo['url'],
+                'provider': 'pexels'
+            })
+    return results
 
 def search_unsplash(query, count=1, page=1):
     """Searches Unsplash."""
     access_key = config.get("UNSPLASH_ACCESS_KEY")
-    if not access_key: return []
+    if not access_key:
+        raise ValueError("Unsplash API key is missing. Please add it in Settings.")
     
     headers = {'Authorization': f'Client-ID {access_key}'}
     url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}&page={page}"
     
-    try:
-        r = requests.get(url, headers=headers)
-        r.raise_for_status()
-        data = r.json()
-        results = []
-        if data.get('results'):
-            for photo in data['results']:
-                results.append({
-                    'thumb': photo['urls']['small'],
-                    'full': photo['urls']['raw'],
-                    'context_url': photo['links']['html'],
-                    'provider': 'unsplash'
-                })
-        return results
-    except Exception as e:
-        logger.warning(f"Error searching Unsplash for '{query}': {e}")
-        return []
+    data = make_search_request(url, headers)
+    results = []
+    if data.get('results'):
+        for photo in data['results']:
+            results.append({
+                'thumb': photo['urls']['small'],
+                'full': photo['urls']['raw'],
+                'context_url': photo['links']['html'],
+                'provider': 'unsplash'
+            })
+    return results
 
 def search_freepik(query, count=1, page=1):
     """Searches Freepik."""
     api_key = config.get("FREEPIK_API_KEY")
-    if not api_key: return []
+    if not api_key: 
+        raise ValueError("Freepik API key is missing. Please add it in Settings.")
     
     headers = {'x-freepik-api-key': api_key}
     url = f"https://api.freepik.com/v1/resources?term={query}&limit={count}&page={page}"
     
-    try:
-        r = requests.get(url, headers=headers)
-        r.raise_for_status()
-        data = r.json()
-        results = []
-        if data.get('data'):
-            for item in data['data']:
-                if 'image' in item and 'source' in item['image']:
-                     results.append({
-                        'thumb': item['image']['source']['url'],
-                        'full': item['image']['source']['url'],
-                        'context_url': item.get('url', '#'),
-                        'provider': 'freepik'
-                    })
-        return results
-    except Exception as e:
-        logger.warning(f"Error searching Freepik for '{query}': {e}")
-        return []
+    data = make_search_request(url, headers)
+    results = []
+    if data.get('data'):
+        for item in data['data']:
+            if 'image' in item and 'source' in item['image']:
+                 results.append({
+                    'thumb': item['image']['source']['url'],
+                    'full': item['image']['source']['url'],
+                    'context_url': item.get('url', '#'),
+                    'provider': 'freepik'
+                })
+    return results
 
 def download_image_as_base64(url):
     """Downloads an image URL and converts it to base64 for Anki."""
@@ -365,36 +367,51 @@ class CardManager:
                 ui.label(f"Loading from {self.current_provider.capitalize()}...").classes('animate-pulse text-blue-500')
 
             def fetch_and_show():
-                # If appending, we are running inside the existing results_area context?
-                # Actually NiceGUI builders append to the CURRENT context.
-                # So we verify we are in the right place.
-                
                 new_images = []
-                if self.current_provider == 'pexels':
-                    new_images = search_pexels(self.current_term, count=self.args.count, page=self.current_page)
-                elif self.current_provider == 'unsplash':
-                    new_images = search_unsplash(self.current_term, count=self.args.count, page=self.current_page)
-                elif self.current_provider == 'freepik':
-                    new_images = search_freepik(self.current_term, count=self.args.count, page=self.current_page)
+                try:
+                    if self.current_provider == 'pexels':
+                        new_images = search_pexels(self.current_term, count=self.args.count, page=self.current_page)
+                    elif self.current_provider == 'unsplash':
+                        new_images = search_unsplash(self.current_term, count=self.args.count, page=self.current_page)
+                    elif self.current_provider == 'freepik':
+                        new_images = search_freepik(self.current_term, count=self.args.count, page=self.current_page)
 
-                if not new_images:
-                    notify(f"No more results on {self.current_provider.capitalize()}.", type='warning')
-                    return
+                    if not new_images:
+                        notify(f"No more results on {self.current_provider.capitalize()}.", type='warning')
+                        # Clear "Loading..." text
+                        self.results_area.clear()
+                        return
 
-                self.loaded_images.extend(new_images)
-                
-                # We need to rebuild the grid or append to it. Rebuilding is safer for layout.
-                self.results_area.clear()
-                with self.results_area:
-                    with ui.grid(columns=3).classes('w-full gap-4'):
-                        for img in self.loaded_images:
-                            with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 transition-all p-0') as card:
-                                ui.image(img['thumb']).classes('h-48 w-full object-cover')
-                                card.on('click', lambda _, i=img: self.select_image(i))
+                    self.loaded_images.extend(new_images)
                     
-                    # Load More Button
-                    ui.button("Load More Results", on_click=self.load_more_images) \
-                        .classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
+                    self.results_area.clear()
+                    with self.results_area:
+                        with ui.grid(columns=3).classes('w-full gap-4'):
+                            for img in self.loaded_images:
+                                with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 transition-all p-0') as card:
+                                    ui.image(img['thumb']).classes('h-48 w-full object-cover')
+                                    card.on('click', lambda _, i=img: self.select_image(i))
+                        
+                        # Load More Button
+                        ui.button("Load More Results", on_click=self.load_more_images) \
+                            .classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
+
+                except ValueError as e:
+                    # Authentication/Missing Key errors (Red text)
+                    self.results_area.clear()
+                    notify(str(e), type='negative')
+                    with self.results_area:
+                        ui.label("⚠️ Authentication Error").classes('text-red-600 text-xl font-bold mt-4')
+                        ui.label(str(e)).classes('text-red-500 text-lg')
+                        ui.label("Click the Settings gear icon in the top right to update your API key.").classes('text-gray-600 mt-2')
+                
+                except Exception as e:
+                    # Generic connection/network errors
+                    self.results_area.clear()
+                    notify(f"API Error: {str(e)}", type='negative')
+                    with self.results_area:
+                        ui.label("⚠️ Connection Error").classes('text-orange-600 text-xl font-bold mt-4')
+                        ui.label(f"Failed to fetch from {self.current_provider}: {str(e)}").classes('text-orange-500 text-lg')
 
             # Run async refetch
             ui.timer(0.1, fetch_and_show, once=True)

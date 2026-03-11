@@ -22,8 +22,8 @@ def test_search_pexels_no_key(mock_config):
     # Safest way: Patch image_updater.config
     with pytest.MonkeyPatch.context() as m:
         m.setattr("anki_image_updater.config", mock_config)
-        results = search_pexels("test")
-        assert results == []
+        with pytest.raises(ValueError, match="Pexels API key is missing."):
+            search_pexels("test")
 
 def test_search_pexels_with_key_mocked(mock_config, mock_requests_get):
     """Test pexels search with mocked response."""
@@ -61,5 +61,17 @@ def test_search_missing_provider_key(mock_config):
     
     with pytest.MonkeyPatch.context() as m:
         m.setattr("anki_image_updater.config", mock_config)
-        assert search_unsplash("test") == []
-        assert search_freepik("test") == []
+        with pytest.raises(ValueError, match="Unsplash API key is missing."):
+            search_unsplash("test")
+        with pytest.raises(ValueError, match="Freepik API key is missing."):
+            search_freepik("test")
+
+def test_make_search_request_401(mock_requests_get):
+    """Test that make_search_request raises ValueError on 401."""
+    from anki_image_updater import make_search_request
+    
+    mock_response = mock_requests_get.return_value
+    mock_response.status_code = 401
+    
+    with pytest.raises(ValueError, match="API key is invalid or unauthorized"):
+        make_search_request("http://fake.url", headers={})
