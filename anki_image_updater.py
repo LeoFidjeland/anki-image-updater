@@ -39,6 +39,7 @@ class AppUI:
         self.current_provider = 'pexels'
         self.current_page = 1
         self.loaded_images = []
+        self._prefetch_task = None  # Background search pre-fetch
         
         # UI Elements
         self.status_label = None
@@ -54,8 +55,6 @@ class AppUI:
         if not success:
             notify(message, type='warning')
             return
-            
-        notify(message, type='info')
         await self.next_card()
 
     async def next_card(self):
@@ -69,18 +68,31 @@ class AppUI:
         # Reset pagination/images for new card
         self.current_page = 1
         self.loaded_images = []
+        
+        # Kick off the API search immediately in the background before building UI.
+        # By the time the UI finishes painting, results are often already here.
+        self._prefetch_task = asyncio.create_task(self._do_search())
+        
         self.refresh_ui_content()
+
+    async def _do_search(self):
+        """Runs the image search for the current provider/term/page."""
+        return await self.searcher.search(
+            self.current_provider,
+            self.logic.current_term,
+            count=self.logic.count,
+            page=self.current_page
+        )
 
     def set_provider(self, provider):
         self.current_provider = provider
         self.current_page = 1
         self.loaded_images = []
-        notify(f"Switched to {provider.capitalize()}")
+        self._prefetch_task = None  # Invalidate any pending prefetch for old provider
         self.refresh_ui_content()
 
     def load_more_images(self):
         self.current_page += 1
-        notify(f"Loading page {self.current_page}...", type='info')
         self.refresh_results(append=True)
 
     async def select_image(self, img_data):
@@ -117,7 +129,6 @@ class AppUI:
 
         # Fire off the background Anki update — user won't wait for this
         asyncio.create_task(_background_update())
-        notify(f"Saving '{snapshot_term}' in background...", type='info')
         # Immediately advance to the next card in context
         await self.next_card()
 
@@ -225,16 +236,17 @@ class AppUI:
                 ui.label(f"Loading from {self.current_provider.capitalize()}...").classes('animate-pulse text-blue-500')
 
             async def fetch_and_show():
+                # Use the pre-fetched results if there's a pending task from next_card()
                 try:
-                    new_images = await self.searcher.search(
-                        self.current_provider, 
-                        self.logic.current_term, 
-                        count=self.logic.count, 
-                        page=self.current_page
-                    )
+                    if self._prefetch_task and not append:
+                        task = self._prefetch_task
+                        self._prefetch_task = None
+                        new_images = await task
+                    else:
+                        new_images = await self._do_search()
 
                     if not new_images:
-                        notify(f"No more results on {self.current_provider.capitalize()}.", type='warning')
+                        notify(f"No results on {self.current_provider.capitalize()}.", type='warning')
                         self.results_area.clear()
                         return
 
@@ -244,7 +256,6 @@ class AppUI:
                     with self.results_area:
                         with ui.grid(columns=3).classes('w-full gap-4'):
                             for img in self.loaded_images:
-                                # Removed transition-all to keep hover snappy  
                                 with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 p-0') as card:
                                     ui.image(img['thumb']).classes('h-48 w-full object-cover')
                                     card.on('click', lambda _, i=img: self.select_image(i))
@@ -266,7 +277,7 @@ class AppUI:
                         ui.label("⚠️ Connection Error").classes('text-orange-600 text-xl font-bold mt-4')
                         ui.label(f"Failed to fetch from {self.current_provider}: {str(e)}").classes('text-orange-500 text-lg')
 
-            ui.timer(0.1, fetch_and_show, once=True)
+            asyncio.create_task(fetch_and_show())
 
 
 def parse_arguments():
