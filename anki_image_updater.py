@@ -297,8 +297,10 @@ class AppUI:
                             return
 
                         if not new_images:
-                            notify(f"No results on {provider.capitalize()}.", type='warning')
                             self.results_area.clear()
+                            with self.results_area:
+                                ui.label("🔍 No results found").classes('text-gray-500 text-xl font-bold mt-4')
+                                ui.label(f"Try a different search term or switch provider.").classes('text-gray-400 mt-1')
                             return
 
                         self.loaded_images.extend(new_images)

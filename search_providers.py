@@ -12,16 +12,15 @@ class ImageSearcher:
     def parse_api_error(self, response):
         """Centralized helper for API requests that raises explicit auth errors."""
         try:
-            if response.status_code in (401, 403):
+            if response.status_code == 401:
                 raise ValueError("API key is invalid or unauthorized. Please check your settings.")
+            if response.status_code == 403:
+                raise Exception(f"Request rejected (403) — you may be temporarily rate-limited. Try again in a moment or switch provider.")
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
             logger.warning(f"HTTP Error: {e}")
             raise Exception(f"API Error ({response.status_code}): {e}")
-        except httpx.RequestError as e:
-            logger.warning(f"Connection Error: {e}")
-            raise Exception(f"Connection failed: {e}")
 
     async def make_search_request(self, url, headers):
         async with httpx.AsyncClient(timeout=10.0) as client:
