@@ -27,7 +27,7 @@ class CardManagerLogic:
         self.field_term = self.config.get("DEFAULT_FIELD_SEARCH", "English")
         self.field_image = self.config.get("DEFAULT_FIELD_IMAGE", "Image")
         self.field_source = self.config.get("DEFAULT_FIELD_SOURCE", "Image Source")
-        self.tag_auto_replaced = self.config.get("DEFAULT_TAG", "replaced")
+        self.tag_auto_replaced = self.config.get("DEFAULT_TAG", "Replaced")
         
         try:
             self.count = int(self.config.get("DEFAULT_IMAGES_PER_TERM", 6))
@@ -42,7 +42,7 @@ class CardManagerLogic:
         Then pre-filters in Python. This avoids per-card HTTP round-trips on startup.
         """
         logger.info(f"Scanning deck: {deck_name}")
-        query = f'deck:"{deck_name}" -tag:auto-skipped'
+        query = f'deck:"{deck_name}" -tag:{self.tag_auto_replaced}::Skipped'
         all_ids = await self.anki.find_notes(query)
         
         if not all_ids:
@@ -111,7 +111,7 @@ class CardManagerLogic:
         note_id = self.current_note['noteId']
         term = self.current_term
         
-        await self.anki.add_tags([note_id], "auto-skipped")
+        await self.anki.add_tags([note_id], f"{self.tag_auto_replaced}::Skipped")
         logger.info(f"Skipped '{term}'")
         return term
 
@@ -156,7 +156,7 @@ class CardManagerLogic:
         
         await self.anki.update_note_fields(note['noteId'], update_fields)
         
-        tags_to_add = [self.tag_auto_replaced, f"replaced::{provider}"]
+        tags_to_add = [f"{self.tag_auto_replaced}::{provider}"]
         await self.anki.add_tags([note['noteId']], " ".join(tags_to_add))
 
         return term

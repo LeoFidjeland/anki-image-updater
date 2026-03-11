@@ -56,7 +56,7 @@ class ImageSearcher:
                     'thumb': photo['src']['medium'],
                     'full': photo['src']['original'],
                     'context_url': photo['url'],
-                    'provider': 'pexels'
+                    'provider': 'Pexels'
                 })
         return results
 
@@ -77,7 +77,7 @@ class ImageSearcher:
                     'thumb': photo['urls']['small'],
                     'full': photo['urls']['raw'],
                     'context_url': photo['links']['html'],
-                    'provider': 'unsplash'
+                    'provider': 'Unsplash'
                 })
         return results
 
@@ -99,7 +99,7 @@ class ImageSearcher:
                         'thumb': item['image']['source']['url'],
                         'full': item['image']['source']['url'],
                         'context_url': item.get('url', '#'),
-                        'provider': 'freepik'
+                        'provider': 'Freepik'
                     })
         return results
 
@@ -151,6 +151,6 @@ class ImageSearcher:
                 'thumb': info.get('thumburl', info.get('url', '')),
                 'full': info.get('url', ''),
                 'context_url': context_url,
-                'provider': 'wikimedia',
+                'provider': 'Wikimedia',
             })
         return results

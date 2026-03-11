@@ -15,7 +15,7 @@ class ConfigManager:
         "DEFAULT_FIELD_IMAGE": "Image",
         "DEFAULT_FIELD_SOURCE": "Image Source",
         "DEFAULT_IMAGES_PER_TERM": 6,
-        "DEFAULT_TAG": "replaced"
+        "DEFAULT_TAG": "Replaced"
     }
 
     def __init__(self):
