@@ -1,4 +1,0 @@
-nicegui>=1.4.0
-requests
-python-dotenv
-pyinstaller

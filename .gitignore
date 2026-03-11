@@ -1,15 +1,11 @@
 # Python
 __pycache__/
+*.egg-info/
 *.py[cod]
 *$py.class
-venv/
+.venv/
+uv.lock
 .env
-
-# PyInstaller
-*.manifest
-*.spec
-build/
-dist/
 
 # Mac
 .DS_Store
