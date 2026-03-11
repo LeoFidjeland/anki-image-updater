@@ -21,6 +21,11 @@ def mock_config(tmp_path, monkeypatch):
     return cfg
 
 @pytest.fixture
+def real_config():
+    """Fixture that loads the actual user configuration for integration tests."""
+    return ConfigManager()
+
+@pytest.fixture
 def mock_requests_get(monkeypatch):
     """Fixture to mock requests.get"""
     mock = MagicMock()

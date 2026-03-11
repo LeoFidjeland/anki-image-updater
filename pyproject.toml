@@ -23,6 +23,7 @@ test = [
 [dependency-groups]
 dev = [
     "pytest",
+    "pytest-cov>=7.0.0",
 ]
 
 [build-system]

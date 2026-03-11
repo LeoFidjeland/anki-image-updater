@@ -1,27 +1,18 @@
 import sys
 import os
+import argparse
+import logging
 
-# FIX: Force loading nicegui from extracted folder (MEIPASS) so __file__ points to real path
+# PyInstaller Fix: nicegui assets
 if getattr(sys, 'frozen', False):
     sys.path.insert(0, sys._MEIPASS)
 
-import requests
-import json
-import base64
-import time
-import argparse
-import re
-import logging
-from config_manager import ConfigManager
-import nicegui
 from nicegui import ui, app, client
 
-# Initialize Config
-config = ConfigManager()
-
-# ================= CONFIGURATION =================
-ANKI_URL = "http://localhost:8765"
-# ==========================================================
+from config_manager import ConfigManager
+from anki_client import AnkiClient
+from search_providers import ImageSearcher
+from core import CardManagerLogic, ActionError
 
 # Setup Logging
 logging.basicConfig(
@@ -34,157 +25,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Note: Keys are now fetched from config_manager via properties/get methods
-
-
-def anki_invoke(action, params=None):
-    """Helper to communicate with AnkiConnect."""
-    payload = {"action": action, "version": 6}
-    if params:
-        payload["params"] = params
-    
-    try:
-        response = requests.post(ANKI_URL, json=payload).json()
-        if len(response) != 2:
-            raise Exception("Response has an unexpected number of fields")
-        if "error" not in response:
-            raise Exception("Response is missing required error field")
-        if response["error"] is not None:
-            raise Exception(response["error"])
-        return response["result"]
-    except Exception as e:
-        logger.error(f"Error invoking Anki method '{action}': {e}")
-        return None
-
-def validate_keys():
-    """Warns about missing keys."""
-    missing = []
-    if not config.get("PEXELS_API_KEY"): missing.append("PEXELS_API_KEY")
-    if not config.get("UNSPLASH_ACCESS_KEY"): missing.append("UNSPLASH_ACCESS_KEY")
-    if not config.get("FREEPIK_API_KEY"): missing.append("FREEPIK_API_KEY")
-    
-    if len(missing) == 3:
-        # We don't print error anymore, UI handles it
-        return False
-    return True
-
-# --- SEARCH PROVIDERS ---
-
-def make_search_request(url, headers):
-    """Centralized helper for API requests that raises explicit auth errors."""
-    try:
-        r = requests.get(url, headers=headers)
-        if r.status_code in (401, 403):
-            raise ValueError("API key is invalid or unauthorized. Please check your settings.")
-        
-        r.raise_for_status()
-        return r.json()
-    except requests.exceptions.HTTPError as e:
-        # We raised 401s manually, this catches 429, 500, etc.
-        logger.warning(f"HTTP Error: {e}")
-        raise Exception(f"API Error ({r.status_code}): {e}")
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"Connection Error: {e}")
-        raise Exception(f"Connection failed: {e}")
-
-def search_pexels(query, count=1, page=1):
-    """Searches Pexels."""
-    api_key = config.get("PEXELS_API_KEY")
-    if not api_key: 
-        raise ValueError("Pexels API key is missing. Please add it in Settings.")
-    
-    headers = {'Authorization': api_key}
-    url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}&page={page}"
-    
-    data = make_search_request(url, headers)
-    results = []
-    if data.get('photos'):
-        for photo in data['photos']:
-            results.append({
-                'thumb': photo['src']['medium'],
-                'full': photo['src']['original'],
-                'context_url': photo['url'],
-                'provider': 'pexels'
-            })
-    return results
-
-def search_unsplash(query, count=1, page=1):
-    """Searches Unsplash."""
-    access_key = config.get("UNSPLASH_ACCESS_KEY")
-    if not access_key:
-        raise ValueError("Unsplash API key is missing. Please add it in Settings.")
-    
-    headers = {'Authorization': f'Client-ID {access_key}'}
-    url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}&page={page}"
-    
-    data = make_search_request(url, headers)
-    results = []
-    if data.get('results'):
-        for photo in data['results']:
-            results.append({
-                'thumb': photo['urls']['small'],
-                'full': photo['urls']['raw'],
-                'context_url': photo['links']['html'],
-                'provider': 'unsplash'
-            })
-    return results
-
-def search_freepik(query, count=1, page=1):
-    """Searches Freepik."""
-    api_key = config.get("FREEPIK_API_KEY")
-    if not api_key: 
-        raise ValueError("Freepik API key is missing. Please add it in Settings.")
-    
-    headers = {'x-freepik-api-key': api_key}
-    url = f"https://api.freepik.com/v1/resources?term={query}&limit={count}&page={page}"
-    
-    data = make_search_request(url, headers)
-    results = []
-    if data.get('data'):
-        for item in data['data']:
-            if 'image' in item and 'source' in item['image']:
-                 results.append({
-                    'thumb': item['image']['source']['url'],
-                    'full': item['image']['source']['url'],
-                    'context_url': item.get('url', '#'),
-                    'provider': 'freepik'
-                })
-    return results
-
-def download_image_as_base64(url):
-    """Downloads an image URL and converts it to base64 for Anki."""
-    try:
-        r = requests.get(url)
-        r.raise_for_status()
-        return base64.b64encode(r.content).decode('utf-8')
-    except Exception as e:
-        logger.error(f"Failed to download image from {url}: {e}")
-        return None
-
-def get_anki_image_base64(filename):
-    """Retrieves an image from Anki media collection as base64."""
-    try:
-        data = anki_invoke("retrieveMediaFile", {"filename": filename})
-        if data:
-            return data
-    except Exception as e:
-        logger.error(f"Failed to retrieve media file '{filename}': {e}")
-    return None
-
 def notify(msg, type='info'):
-    """Wrapper for ui.notify with standard position."""
     ui.notify(msg, type=type, position='bottom-left')
 
-class CardManager:
-    def __init__(self, args):
+class AppUI:
+    def __init__(self, logic: CardManagerLogic, searcher: ImageSearcher, args):
+        self.logic = logic
+        self.searcher = searcher
         self.args = args
-        self.note_ids = []
-        self.current_index = -1
-        self.current_note = None
-        self.current_term = ""
-        self.current_old_image_b64 = None
         
-        # State
+        # UI State
         self.current_provider = 'pexels'
         self.current_page = 1
         self.loaded_images = []
@@ -193,75 +43,28 @@ class CardManager:
         self.status_label = None
         self.main_container = None
         self.results_area = None
-    
-    def fetch_decks(self):
-        return anki_invoke("deckNames") or []
 
     def start_deck_load(self, deck_name):
         self.args.deck = deck_name
         self.load_cards()
 
     def load_cards(self):
-        logger.info(f"Scanning deck: {self.args.deck}")
-        try:
-            # We fetch ALL cards, then filter manually
-            # We also exclude cards that are already tagged as auto-skipped
-            query = f'deck:"{self.args.deck}" -tag:auto-skipped'
-            self.note_ids = anki_invoke("findNotes", {"query": query})
+        success, message = self.logic.load_deck(self.args.deck)
+        if not success:
+            notify(message, type='warning')
+            return
             
-            if not self.note_ids:
-                notify(f"No cards found (or all skipped/processed) in '{self.args.deck}'", type='warning')
-                return
-            
-            notify(f"Found {len(self.note_ids)} candidates. Filtering...", type='info')
-            self.current_index = -1
-            self.next_card()
-        except Exception as e:
-            notify(f"Error: {e}", type='negative')
+        notify(message, type='info')
+        self.next_card()
 
     def next_card(self):
-        self.current_index += 1
-        if self.current_index >= len(self.note_ids):
+        found = self.logic.advance_to_next_valid_card()
+        if not found:
             notify("All cards processed!", type='positive')
             if self.status_label: self.status_label.set_text("All Done!")
             if self.main_container: self.main_container.clear()
             return
-
-        note_id = self.note_ids[self.current_index]
-        notes_info = anki_invoke("notesInfo", {"notes": [note_id]})
-        if not notes_info:
-            self.next_card()
-            return
-
-        self.current_note = notes_info[0]
-        fields = self.current_note['fields']
-        
-        # INTELLIGENCE FILTERING
-        # 1. Check if Source field is already populated
-        source_val = fields.get(self.args.field_source, {}).get('value', '').strip()
-        if source_val:
-            logger.info(f"Skipping {note_id}: Source already exists.")
-            self.next_card()
-            return
-
-        raw_term = fields.get(self.args.field_term, {}).get('value', '')
-        self.current_term = raw_term.split('<')[0].strip()
-        
-        # Extract old image
-        self.current_old_image_b64 = None
-        old_img_html = fields.get(self.args.field_image, {}).get('value', '')
-        match = re.search(r'src="([^"]+)"', old_img_html)
-        if match:
-            filename = match.group(1)
-            b64_data = get_anki_image_base64(filename)
-            if b64_data:
-                self.current_old_image_b64 = f"data:image/jpeg;base64,{b64_data}"
-
-        if not self.current_term:
-            logger.warning(f"Skipping empty term for ID {note_id}")
-            self.next_card()
-            return
-
+            
         # Reset pagination/images for new card
         self.current_page = 1
         self.loaded_images = []
@@ -269,7 +72,7 @@ class CardManager:
 
     def set_provider(self, provider):
         self.current_provider = provider
-        self.current_page = 1 # Reset page on provider switch
+        self.current_page = 1
         self.loaded_images = []
         notify(f"Switched to {provider.capitalize()}")
         self.refresh_ui_content()
@@ -279,280 +82,210 @@ class CardManager:
         notify(f"Loading page {self.current_page}...", type='info')
         self.refresh_results(append=True)
 
-    def refresh_ui_content(self):
-        """Refreshes the entire card view."""
-        if self.status_label:
-            count_remaining = len(self.note_ids) - self.current_index
-            self.status_label.set_text(f"Processing: {self.current_term} ({count_remaining} left)")
+    def select_image(self, img_data):
+        provider = img_data['provider']
+        notify(f"Downloading from {provider}...", type='info')
         
+        try:
+            term = self.logic.apply_image_to_card(img_data)
+            notify(f"Updated '{term}'!", type='positive')
+            self.next_card()
+        except ActionError as e:
+            notify(str(e), type='negative')
+        except Exception as e:
+            logger.exception("Error applying image")
+            notify(f"Unexpected error: {e}", type='negative')
+            
+    def skip_card(self):
+        term = self.logic.skip_card()
+        if term:
+            notify(f"Skipped '{term}'", type='warning')
+        self.next_card()
+
+    def build_settings_dialog(self):
+        with ui.dialog() as settings_dialog, ui.card().classes('w-full max-w-lg'):
+            ui.label('Settings').classes('text-xl font-bold mb-4')
+            with ui.column().classes('w-full gap-2'):
+                ui.label("API Keys").classes('font-bold mt-2')
+                pexels_input = ui.input("Pexels API Key", value=self.logic.config.get("PEXELS_API_KEY")).props('type=password')
+                unsplash_input = ui.input("Unsplash Access Key", value=self.logic.config.get("UNSPLASH_ACCESS_KEY")).props('type=password')
+                freepik_input = ui.input("Freepik API Key", value=self.logic.config.get("FREEPIK_API_KEY")).props('type=password')
+                
+                ui.label("Defaults").classes('font-bold mt-4')
+                deck_input = ui.input("Default Deck Name", value=self.logic.config.get("DEFAULT_DECK_NAME"))
+                
+                with ui.row().classes('w-full justify-end mt-4'):
+                    def save_settings():
+                        self.logic.config.set("PEXELS_API_KEY", pexels_input.value.strip())
+                        self.logic.config.set("UNSPLASH_ACCESS_KEY", unsplash_input.value.strip())
+                        self.logic.config.set("FREEPIK_API_KEY", freepik_input.value.strip())
+                        self.logic.config.set("DEFAULT_DECK_NAME", deck_input.value.strip())
+                        notify("Settings Saved!", type='positive')
+                        settings_dialog.close()
+                        
+                    ui.button("Cancel", on_click=settings_dialog.close).props('flat')
+                    ui.button("Save", on_click=save_settings).classes('bg-blue-600')
+        return settings_dialog
+
+    def refresh_ui_content(self):
+        if self.status_label:
+            count = self.logic.get_remaining_count()
+            self.status_label.set_text(f"Processing: {self.logic.current_term} ({count} left)")
+            
         if self.main_container:
             self.main_container.clear()
             with self.main_container:
-                # Top Controls: Provider Toggle
-                with ui.row().classes('w-full justify-center mb-4 gap-2'):
-                    ui.label("Provider:").classes('py-2 font-bold text-gray-600')
-                    
-                    def render_provider_btn(provider_name):
-                        is_active = self.current_provider == provider_name
-                        if is_active:
-                            btn_props = 'color=blue-6 text-color=white unelevated'
-                        else:
-                            btn_props = 'color=white text-color=grey-9 outline'
-                            
-                        ui.button(provider_name.capitalize(), 
-                                 on_click=lambda: self.set_provider(provider_name)) \
-                                 .props(btn_props) \
-                                 .classes('px-4 font-bold')
-
-                    render_provider_btn('pexels')
-                    render_provider_btn('unsplash')
-                    render_provider_btn('freepik')
-
-                # Layout: Split into "Current" (Left) and "New" (Right/Grid)
+                self.build_provider_toggles()
+                
                 with ui.row().classes('w-full gap-4'):
-                    
-                    # --- Left: Old Image & Context ---
-                    with ui.card().classes('w-1/4 min-w-[200px] p-2 bg-gray-50'):
-                        # Context Info (Tibetan)
-                        # We try to find a field that looks like Tibetan or just the first non-English field
-                        # For now, let's explicitly look for 'Tibetan' as requested, or fallback to showing everything relevant
-                        tibetan_val = self.current_note['fields'].get('Tibetan', {}).get('value', '')
-                        if tibetan_val:
-                             ui.label("Tibetan:").classes('text-xs font-bold text-gray-500 mt-2')
-                             ui.html(tibetan_val, sanitize=False).classes('text-2xl text-center my-2 text-purple-800')
+                    self.build_left_panel()
+                    self.build_right_panel()
 
-                        ui.label("Current Image").classes('text-sm font-bold text-gray-500 mb-2')
-                        if self.current_old_image_b64:
-                            ui.image(self.current_old_image_b64).classes('w-full rounded mb-4')
-                        else:
-                            ui.label("No Image").classes('text-gray-400 italic text-center py-10 mb-4')
-                        
-                        
+    def build_provider_toggles(self):
+        with ui.row().classes('w-full justify-center mb-4 gap-2'):
+            ui.label("Provider:").classes('py-2 font-bold text-gray-600')
+            
+            def render_provider_btn(provider_name):
+                is_active = self.current_provider == provider_name
+                btn_props = 'color=blue-6 text-color=white unelevated' if is_active else 'color=white text-color=grey-9 outline'
+                ui.button(provider_name.capitalize(), on_click=lambda p=provider_name: self.set_provider(p)) \
+                    .props(btn_props).classes('px-4 font-bold')
 
-                    # --- Right: New Options ---
-                    with ui.column().classes('flex-1'):
-                        # Header: Search Input + Skip Button
-                        with ui.row().classes('w-full justify-between items-center mb-2'):
-                            
-                            def on_search_change(e):
-                                self.current_term = e.value
-                                # Reset pagination
-                                self.current_page = 1
-                                self.loaded_images = []
-                                self.refresh_results()
+            render_provider_btn('pexels')
+            render_provider_btn('unsplash')
+            render_provider_btn('freepik')
 
-                            ui.input(label="Search Query", value=self.current_term) \
-                                .on('keydown.enter', lambda e: on_search_change(e.sender)) \
-                                .props('outlined dense') \
-                                .classes('w-2/3')
-                            
-                            ui.button("Skip Card", on_click=self.skip_card) \
-                                .props('color=grey-5 flat icon=skip_next') \
-                                .classes('font-bold')
+    def build_left_panel(self):
+        with ui.card().classes('w-1/4 min-w-[200px] p-2 bg-gray-50'):
+            # Context Info (Tibetan)
+            if self.logic.current_note:
+                 tibetan_val = self.logic.current_note['fields'].get('Tibetan', {}).get('value', '')
+                 if tibetan_val:
+                      ui.label("Tibetan:").classes('text-xs font-bold text-gray-500 mt-2')
+                      ui.html(tibetan_val, sanitize=False).classes('text-2xl text-center my-2 text-purple-800')
 
-                        self.results_area = ui.column().classes('w-full')
-                        self.refresh_results() # Initial load
+            ui.label("Current Image").classes('text-sm font-bold text-gray-500 mb-2')
+            if self.logic.current_old_image_b64:
+                ui.image(self.logic.current_old_image_b64).classes('w-full rounded mb-4')
+            else:
+                ui.label("No Image").classes('text-gray-400 italic text-center py-10 mb-4')
+
+    def build_right_panel(self):
+        with ui.column().classes('flex-1'):
+            with ui.row().classes('w-full justify-between items-center mb-2'):
+                def on_search_change(e):
+                    self.logic.current_term = e.value
+                    self.current_page = 1
+                    self.loaded_images = []
+                    self.refresh_results()
+
+                ui.input(label="Search Query", value=self.logic.current_term) \
+                    .on('keydown.enter', lambda e: on_search_change(e.sender)) \
+                    .props('outlined dense').classes('w-2/3')
+                
+                ui.button("Skip Card", on_click=self.skip_card) \
+                    .props('color=grey-5 flat icon=skip_next').classes('font-bold')
+
+            self.results_area = ui.column().classes('w-full')
+            self.refresh_results()
 
     def refresh_results(self, append=False):
-        """Refreshes just the search results grid."""
         if not self.results_area: return
         
-        # If not appending, clear stored images (logic handled in callers usually, but double check)
         if not append:
             self.loaded_images = []
             self.results_area.clear()
-        
+            
         with self.results_area:
             if not self.loaded_images and not append:
                 ui.label(f"Loading from {self.current_provider.capitalize()}...").classes('animate-pulse text-blue-500')
 
             def fetch_and_show():
-                new_images = []
                 try:
-                    if self.current_provider == 'pexels':
-                        new_images = search_pexels(self.current_term, count=self.args.count, page=self.current_page)
-                    elif self.current_provider == 'unsplash':
-                        new_images = search_unsplash(self.current_term, count=self.args.count, page=self.current_page)
-                    elif self.current_provider == 'freepik':
-                        new_images = search_freepik(self.current_term, count=self.args.count, page=self.current_page)
+                    new_images = self.searcher.search(
+                        self.current_provider, 
+                        self.logic.current_term, 
+                        count=self.logic.count, 
+                        page=self.current_page
+                    )
 
                     if not new_images:
                         notify(f"No more results on {self.current_provider.capitalize()}.", type='warning')
-                        # Clear "Loading..." text
                         self.results_area.clear()
                         return
 
                     self.loaded_images.extend(new_images)
-                    
                     self.results_area.clear()
+                    
                     with self.results_area:
                         with ui.grid(columns=3).classes('w-full gap-4'):
                             for img in self.loaded_images:
                                 with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 transition-all p-0') as card:
                                     ui.image(img['thumb']).classes('h-48 w-full object-cover')
+                                    # Need a default arg binding for the lambda loop
                                     card.on('click', lambda _, i=img: self.select_image(i))
                         
-                        # Load More Button
                         ui.button("Load More Results", on_click=self.load_more_images) \
                             .classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
 
                 except ValueError as e:
-                    # Authentication/Missing Key errors (Red text)
                     self.results_area.clear()
                     notify(str(e), type='negative')
                     with self.results_area:
                         ui.label("⚠️ Authentication Error").classes('text-red-600 text-xl font-bold mt-4')
                         ui.label(str(e)).classes('text-red-500 text-lg')
                         ui.label("Click the Settings gear icon in the top right to update your API key.").classes('text-gray-600 mt-2')
-                
                 except Exception as e:
-                    # Generic connection/network errors
                     self.results_area.clear()
                     notify(f"API Error: {str(e)}", type='negative')
                     with self.results_area:
                         ui.label("⚠️ Connection Error").classes('text-orange-600 text-xl font-bold mt-4')
                         ui.label(f"Failed to fetch from {self.current_provider}: {str(e)}").classes('text-orange-500 text-lg')
 
-            # Run async refetch
             ui.timer(0.1, fetch_and_show, once=True)
 
-    def select_image(self, img_data):
-        url = img_data['full']
-        provider = img_data['provider']
-        notify(f"Downloading from {provider}...", type='info')
-        
-        image_b64 = download_image_as_base64(url)
-        if not image_b64:
-            notify("Failed to download image", type='negative')
-            return
-
-        clean_term = self.current_term
-        # Sanitize filenames a bit more strictly
-        safe_term = re.sub(r'[^a-zA-Z0-9]', '', clean_term)[:20] 
-        timestamp = int(time.time())
-        filename = f"{provider}_{safe_term}_{timestamp}.jpg"
-
-        anki_invoke("storeMediaFile", {
-            "filename": filename,
-            "data": image_b64
-        })
-
-        new_source_content = img_data['context_url']
-        new_image_content = f'<img src="{filename}">'
-
-        update_payload = {
-            "note": {
-                "id": self.current_note['noteId'],
-                "fields": {
-                    self.args.field_image: new_image_content,
-                    self.args.field_source: new_source_content,
-                }
-            }
-        }
-        
-        anki_invoke("updateNoteFields", update_payload)
-        
-        # AUTO-REPLACED TAG
-        tags_to_add = ["auto-replaced", f"updated-{provider}"]
-        anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": " ".join(tags_to_add)})
-
-        notify(f"Updated '{clean_term}'!", type='positive')
-        self.next_card()
-
-    def skip_card(self):
-        # AUTO-SKIPPED TAG
-        tag = "auto-skipped"
-        anki_invoke("addTags", {"notes": [self.current_note['noteId']], "tags": tag})
-        notify(f"Skipped '{self.current_term}'", type='warning')
-        self.next_card()
-
-
 def parse_arguments():
+    config = ConfigManager()
     parser = argparse.ArgumentParser(description="Anki Image Fetcher GUI")
-    # Deck is now optional/selectable
     parser.add_argument("--deck", default=None)
-    parser.add_argument("--field-term", default=config.get("DEFAULT_FIELD_SEARCH"))
-    parser.add_argument("--field-image", default=config.get("DEFAULT_FIELD_IMAGE"))
-    parser.add_argument("--field-source", default=config.get("DEFAULT_FIELD_SOURCE"))
-    parser.add_argument("--field-notes", default=config.get("DEFAULT_FIELD_NOTES"))
-    
-    # Handle int conversion safely
-    count_val = config.get("DEFAULT_IMAGES_PER_TERM")
-    try:
-        count_val = int(count_val)
-    except (ValueError, TypeError):
-        count_val = 6
-        
-    parser.add_argument("--count", type=int, default=count_val)
+    # The rest are handled via config mostly now or defaults
     return parser.parse_args()
 
 @ui.page('/')
 def index_page():
     args = parse_arguments()
+    config = ConfigManager()
+    anki = AnkiClient()
+    logic = CardManagerLogic(config, anki)
+    searcher = ImageSearcher(config)
     
-    if not validate_keys():
+    missing = [k for k in ["PEXELS_API_KEY", "UNSPLASH_ACCESS_KEY", "FREEPIK_API_KEY"] if not config.get(k)]
+    if len(missing) == 3:
         ui.notify("Please configure API keys in Settings", type='warning', close_button=True, timeout=0)
-        # ui.label("Error: API Keys missing in .env or script.").classes('text-red-500 text-xl')
-        # return
 
-    manager = CardManager(args)
+    app_ui = AppUI(logic, searcher, args)
 
-    # --- UI LAYOUT ---
     with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
-        # Header
         with ui.row().classes('w-full justify-between items-center mb-4'):
             ui.label("Anki Image Updater").classes('text-2xl font-bold')
-            manager.status_label = ui.label("Ready to start...").classes('text-xl text-blue-600 font-semibold')
+            app_ui.status_label = ui.label("Ready to start...").classes('text-xl text-blue-600 font-semibold')
         
-        # Main Area
-        manager.main_container = ui.column().classes('w-full min-h-[500px] border border-gray-200 rounded-lg p-4 bg-white shadow-sm')
-        
-        # Initialize
-        
-        # --- Settings Dialog ---
-        with ui.dialog() as settings_dialog, ui.card().classes('w-full max-w-lg'):
-            ui.label('Settings').classes('text-xl font-bold mb-4')
-            
-            with ui.column().classes('w-full gap-2'):
-                ui.label("API Keys").classes('font-bold mt-2')
-                pexels_input = ui.input("Pexels API Key", value=config.get("PEXELS_API_KEY")).props('type=password')
-                unsplash_input = ui.input("Unsplash Access Key", value=config.get("UNSPLASH_ACCESS_KEY")).props('type=password')
-                freepik_input = ui.input("Freepik API Key", value=config.get("FREEPIK_API_KEY")).props('type=password')
-                
-                ui.label("Defaults").classes('font-bold mt-4')
-                deck_input = ui.input("Default Deck Name", value=config.get("DEFAULT_DECK_NAME"))
-                # other fields can be added here as needed
-                
-                with ui.row().classes('w-full justify-end mt-4'):
-                    def save_settings():
-                        config.set("PEXELS_API_KEY", pexels_input.value.strip())
-                        config.set("UNSPLASH_ACCESS_KEY", unsplash_input.value.strip())
-                        config.set("FREEPIK_API_KEY", freepik_input.value.strip())
-                        config.set("DEFAULT_DECK_NAME", deck_input.value.strip())
-                        
-                        ui.notify("Settings Saved!", type='positive')
-                        settings_dialog.close()
-                        # Optional: reload specific things or just let user restart/continue
-                        
-                    ui.button("Cancel", on_click=settings_dialog.close).props('flat')
-                    ui.button("Save", on_click=save_settings).classes('bg-blue-600')
+        app_ui.main_container = ui.column().classes('w-full min-h-[500px] border border-gray-200 rounded-lg p-4 bg-white shadow-sm')
+        settings_dialog = app_ui.build_settings_dialog()
 
-        # Header - settings button
         with ui.row().classes('absolute top-4 right-4'):
              ui.button(icon='settings', on_click=settings_dialog.open).props('flat round color=grey-7')
 
         if args.deck:
-            # If deck was passed via CLI, start immediately
-            with manager.main_container:
-                 ui.button("Start Processing", on_click=lambda: manager.load_cards()).classes('bg-green-600')
+            with app_ui.main_container:
+                 ui.button("Start Processing", on_click=lambda: app_ui.load_cards()).classes('bg-green-600')
         else:
-            # Show Deck Selector
-            with manager.main_container:
+            with app_ui.main_container:
                 ui.label("Select a Deck to Begin:").classes('text-lg mb-2')
-                decks = manager.fetch_decks()
+                decks = anki.fetch_decks()
                 if decks:
                     select = ui.select(decks, label="Deck").classes('w-1/2')
-                    ui.button("Start", on_click=lambda: manager.start_deck_load(select.value)).classes('bg-blue-600 mt-4')
+                    ui.button("Start", on_click=lambda: app_ui.start_deck_load(select.value)).classes('bg-blue-600 mt-4')
                 else:
                     ui.label("Could not fetch decks. Is Anki running?").classes('text-red-500')
 
@@ -560,16 +293,10 @@ def start_app():
     import asyncio
     import webbrowser
     
-    # Shutdown Strategy: Exit when no clients are connected (tab closed)
     async def check_shutdown():
-        # NiceGUI keeps clients alive for 3.0s by default to allow page refresh.
-        # We wait slightly longer to see if it was a refresh or a close.
         print("🔌 Client disconnected. Waiting 4s to see if it's a refresh...", flush=True)
         await asyncio.sleep(4.0)
-        
-        # Check active clients in Client.instances
         count = len(client.Client.instances)
-        print(f"👀 Active clients after wait: {count}", flush=True)
         if count == 0:
             print("❌ No clients connected. Shutting down server...", flush=True)
             app.shutdown()
@@ -578,30 +305,17 @@ def start_app():
             
     app.on_disconnect(lambda: asyncio.create_task(check_shutdown()))
 
-    # Explicitly open browser since show=True can be flaky in frozen apps
     def open_browser():
         webbrowser.open("http://localhost:8080/")
     
     app.on_startup(open_browser)
 
     print("🚀 Server starting on http://localhost:8080...", flush=True)
-    
-    # reload=False is critical for freezing. 
-    # show=False because we handle it manually above to be safe
     ui.run(title="Anki Image Updater", reload=False, dark=False, show=False)
-    
     print("👋 Application closed. You can close this terminal.", flush=True)
     sys.exit(0)
 
 if __name__ in {"__main__", "__mp_main__"}:
     import multiprocessing
-    import sys
-    import os
     multiprocessing.freeze_support() 
-    
-    # PyInstaller Fix: nicegui assets
-    if getattr(sys, 'frozen', False):
-         # Already handled by sys.path hack at top of file, but good to ensure everything is initialized
-         pass
-
     start_app()
