@@ -40,6 +40,8 @@ class AppUI:
         self.current_page = 1
         self.loaded_images = []
         self._prefetch_task = None  # Background search pre-fetch
+        self._is_navigating = False  # Guard against double-clicks during async navigation
+        self._fetch_generation = 0  # Incremented on every new search; stale tasks self-discard
         
         # UI Elements
         self.status_label = None
@@ -71,24 +73,34 @@ class AppUI:
         
         # Kick off the API search immediately in the background before building UI.
         # By the time the UI finishes painting, results are often already here.
-        self._prefetch_task = asyncio.create_task(self._do_search())
+        # Snapshot params NOW so the task uses the right term even if state changes.
+        self._fetch_generation += 1
+        gen = self._fetch_generation
+        provider = self.current_provider
+        term = self.logic.current_term
+        page = self.current_page
+        self._prefetch_task = asyncio.create_task(self._do_search(provider, term, page))
+        self._prefetch_generation = gen  # So fetch_and_show knows which gen this task belongs to
         
         self.refresh_ui_content()
 
-    async def _do_search(self):
-        """Runs the image search for the current provider/term/page."""
+    async def _do_search(self, provider, term, page):
+        """Runs a search with explicit snapshot params — never reads from self mid-flight."""
         return await self.searcher.search(
-            self.current_provider,
-            self.logic.current_term,
+            provider,
+            term,
             count=self.logic.count,
-            page=self.current_page
+            page=page
         )
 
     def set_provider(self, provider):
         self.current_provider = provider
         self.current_page = 1
         self.loaded_images = []
-        self._prefetch_task = None  # Invalidate any pending prefetch for old provider
+        # Cancel the in-flight prefetch (not just null it) so it doesn't waste bandwidth
+        if self._prefetch_task and not self._prefetch_task.done():
+            self._prefetch_task.cancel()
+        self._prefetch_task = None
         self.refresh_ui_content()
 
     def load_more_images(self):
@@ -100,6 +112,10 @@ class AppUI:
         Immediately advances to the next card, and fires off the Anki update
         as a background task so the user doesn't have to wait.
         """
+        if self._is_navigating:
+            return  # Ignore clicks while a previous selection is still processing
+        self._is_navigating = True
+
         from nicegui import context as ng_context
         # Capture context NOW, before we lose it in the background task
         current_client = ng_context.client
@@ -109,6 +125,13 @@ class AppUI:
         # has already moved on — this prevents updating the wrong card.
         snapshot_note = self.logic.current_note
         snapshot_term = self.logic.current_term
+
+        # Immediately clear the results grid so stale image cards
+        # can't receive further clicks while next_card() is awaiting Anki.
+        if self.results_area:
+            self.results_area.clear()
+            with self.results_area:
+                ui.label(f"Saving '{snapshot_term}'...").classes('text-blue-500 animate-pulse py-4')
 
         async def _background_update():
             with current_client:  # Restore NiceGUI slot context for UI calls
@@ -130,13 +153,22 @@ class AppUI:
         # Fire off the background Anki update — user won't wait for this
         asyncio.create_task(_background_update())
         # Immediately advance to the next card in context
-        await self.next_card()
+        try:
+            await self.next_card()
+        finally:
+            self._is_navigating = False
 
     async def skip_card(self):
-        term = await self.logic.skip_card()
-        if term:
-            notify(f"Skipped '{term}'", type='warning')
-        await self.next_card()
+        if self._is_navigating:
+            return
+        self._is_navigating = True
+        try:
+            term = await self.logic.skip_card()
+            if term:
+                notify(f"Skipped '{term}'", type='warning')
+            await self.next_card()
+        finally:
+            self._is_navigating = False
 
     def build_settings_dialog(self):
         with ui.dialog() as settings_dialog, ui.card().classes('w-full max-w-lg'):
@@ -227,55 +259,78 @@ class AppUI:
     def refresh_results(self, append=False):
         if not self.results_area: return
         
+        # Snapshot all the params that define this particular search.
+        # Increment generation so any currently-running fetch_and_show knows it's stale.
         if not append:
             self.loaded_images = []
             self.results_area.clear()
+            self._fetch_generation += 1
+
+        my_generation = self._fetch_generation
+        provider = self.current_provider
+        term = self.logic.current_term
+        page = self.current_page
             
+        # Capture NiceGUI slot context NOW (synchronously) before create_task loses it.
+        # The same pattern used in select_image — must be done while we're in a request handler.
+        from nicegui import context as ng_context
+        current_client = ng_context.client
+
         with self.results_area:
             if not self.loaded_images and not append:
-                ui.label(f"Loading from {self.current_provider.capitalize()}...").classes('animate-pulse text-blue-500')
+                ui.label(f"Loading from {provider.capitalize()}...").classes('animate-pulse text-blue-500')
 
             async def fetch_and_show():
-                # Use the pre-fetched results if there's a pending task from next_card()
-                try:
-                    if self._prefetch_task and not append:
-                        task = self._prefetch_task
-                        self._prefetch_task = None
-                        new_images = await task
-                    else:
-                        new_images = await self._do_search()
+                with current_client:  # Restore slot context so notify() and ui.* work
+                    try:
+                        # Use the pre-fetched task if it belongs to this same generation
+                        if self._prefetch_task and not append and getattr(self, '_prefetch_generation', -1) == my_generation:
+                            task = self._prefetch_task
+                            self._prefetch_task = None
+                            new_images = await task
+                        else:
+                            new_images = await self._do_search(provider, term, page)
 
-                    if not new_images:
-                        notify(f"No results on {self.current_provider.capitalize()}.", type='warning')
+                        # Stale check: discard if a newer search started while we were awaiting
+                        if self._fetch_generation != my_generation:
+                            logger.debug(f"Discarding stale search (gen {my_generation})")
+                            return
+
+                        if not new_images:
+                            notify(f"No results on {provider.capitalize()}.", type='warning')
+                            self.results_area.clear()
+                            return
+
+                        self.loaded_images.extend(new_images)
                         self.results_area.clear()
-                        return
-
-                    self.loaded_images.extend(new_images)
-                    self.results_area.clear()
-                    
-                    with self.results_area:
-                        with ui.grid(columns=3).classes('w-full gap-4'):
-                            for img in self.loaded_images:
-                                with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 p-0') as card:
-                                    ui.image(img['thumb']).classes('h-48 w-full object-cover')
-                                    card.on('click', lambda _, i=img: self.select_image(i))
                         
-                        ui.button("Load More Results", on_click=self.load_more_images) \
-                            .classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
+                        with self.results_area:
+                            with ui.grid(columns=3).classes('w-full gap-4'):
+                                for img in self.loaded_images:
+                                    with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 p-0') as card:
+                                        ui.image(img['thumb']).classes('h-48 w-full object-cover')
+                                        card.on('click', lambda _, i=img: self.select_image(i))
+                            
+                            ui.button("Load More Results", on_click=self.load_more_images) \
+                                .classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
 
-                except ValueError as e:
-                    self.results_area.clear()
-                    notify(str(e), type='negative')
-                    with self.results_area:
-                        ui.label("⚠️ Authentication Error").classes('text-red-600 text-xl font-bold mt-4')
-                        ui.label(str(e)).classes('text-red-500 text-lg')
-                        ui.label("Click the Settings gear icon in the top right to update your API key.").classes('text-gray-600 mt-2')
-                except Exception as e:
-                    self.results_area.clear()
-                    notify(f"API Error: {str(e)}", type='negative')
-                    with self.results_area:
-                        ui.label("⚠️ Connection Error").classes('text-orange-600 text-xl font-bold mt-4')
-                        ui.label(f"Failed to fetch from {self.current_provider}: {str(e)}").classes('text-orange-500 text-lg')
+                    except asyncio.CancelledError:
+                        pass  # Prefetch was cancelled (e.g. provider switched) — silently stop
+                    except ValueError as e:
+                        if self._fetch_generation != my_generation: return
+                        self.results_area.clear()
+                        notify(str(e), type='negative')
+                        with self.results_area:
+                            ui.label("⚠️ Authentication Error").classes('text-red-600 text-xl font-bold mt-4')
+                            ui.label(str(e)).classes('text-red-500 text-lg')
+                            ui.label("Click the Settings gear icon in the top right to update your API key.").classes('text-gray-600 mt-2')
+                    except Exception as e:
+                        if self._fetch_generation != my_generation: return
+                        self.results_area.clear()
+                        notify(f"API Error: {str(e)}", type='negative')
+                        with self.results_area:
+                            ui.label("⚠️ Connection Error").classes('text-orange-600 text-xl font-bold mt-4')
+                            ui.label(f"Failed to fetch from {provider}: {str(e)}").classes('text-orange-500 text-lg')
 
             asyncio.create_task(fetch_and_show())
 
