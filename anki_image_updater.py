@@ -235,6 +235,7 @@ class AppUI:
             render_provider_btn('pexels')
             render_provider_btn('unsplash')
             render_provider_btn('freepik')
+            render_provider_btn('wikimedia')
 
     def build_left_panel(self):
         with ui.card().classes('w-1/4 min-w-[200px] p-2 bg-gray-50'):

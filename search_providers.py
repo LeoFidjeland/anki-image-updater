@@ -34,6 +34,8 @@ class ImageSearcher:
             return await self.search_unsplash(query, count, page)
         elif provider == 'freepik':
             return await self.search_freepik(query, count, page)
+        elif provider == 'wikimedia':
+            return await self.search_wikimedia(query, count, page)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -99,4 +101,56 @@ class ImageSearcher:
                         'context_url': item.get('url', '#'),
                         'provider': 'freepik'
                     })
+        return results
+
+    async def search_wikimedia(self, query, count=1, page=1):
+        """Searches Wikimedia Commons. Free, no API key required."""
+        import urllib.parse
+        # Wikimedia paginates via offset, not page numbers
+        offset = (page - 1) * count
+        # Fetch extra candidates so we have enough after filtering non-images
+        limit = min(count * 3, 50)
+        params = {
+            'action': 'query',
+            'generator': 'search',
+            'gsrnamespace': '6',   # File: namespace only
+            'gsrsearch': query,
+            'gsrlimit': str(limit),
+            'gsroffset': str(offset),
+            'prop': 'imageinfo',
+            'iiprop': 'url|mime',
+            'iiurlwidth': '300',   # Generates thumburl at this width
+            'format': 'json',
+            'origin': '*',
+        }
+        url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(params)
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Wikimedia API requires a descriptive User-Agent; blocks anonymous bots
+            headers = {'User-Agent': 'AnkiImageUpdater/1.0 (https://github.com/anki-image-updater; open-source tool)'}
+            r = await client.get(url, headers=headers)
+            r.raise_for_status()
+            data = r.json()
+
+        results = []
+        pages = data.get('query', {}).get('pages', {})
+        for page_data in pages.values():
+            if len(results) >= count:
+                break
+            imageinfo = page_data.get('imageinfo', [])
+            if not imageinfo:
+                continue
+            info = imageinfo[0]
+            mime = info.get('mime', '')
+            # Skip non-raster images (PDFs, SVGs, audio/video, etc.)
+            if not mime.startswith('image/') or mime == 'image/svg+xml':
+                continue
+            title = page_data.get('title', '')
+            context_url = "https://commons.wikimedia.org/wiki/" + urllib.parse.quote(title.replace(' ', '_'))
+            results.append({
+                'thumb': info.get('thumburl', info.get('url', '')),
+                'full': info.get('url', ''),
+                'context_url': context_url,
+                'provider': 'wikimedia',
+            })
         return results
