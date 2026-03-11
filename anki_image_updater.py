@@ -1,5 +1,6 @@
 import sys
 import os
+import asyncio
 import argparse
 import logging
 
@@ -44,21 +45,21 @@ class AppUI:
         self.main_container = None
         self.results_area = None
 
-    def start_deck_load(self, deck_name):
+    async def start_deck_load(self, deck_name):
         self.args.deck = deck_name
-        self.load_cards()
+        await self.load_cards()
 
-    def load_cards(self):
-        success, message = self.logic.load_deck(self.args.deck)
+    async def load_cards(self):
+        success, message = await self.logic.load_deck(self.args.deck)
         if not success:
             notify(message, type='warning')
             return
             
         notify(message, type='info')
-        self.next_card()
+        await self.next_card()
 
-    def next_card(self):
-        found = self.logic.advance_to_next_valid_card()
+    async def next_card(self):
+        found = await self.logic.advance_to_next_valid_card()
         if not found:
             notify("All cards processed!", type='positive')
             if self.status_label: self.status_label.set_text("All Done!")
@@ -82,25 +83,49 @@ class AppUI:
         notify(f"Loading page {self.current_page}...", type='info')
         self.refresh_results(append=True)
 
-    def select_image(self, img_data):
-        provider = img_data['provider']
-        notify(f"Downloading from {provider}...", type='info')
+    async def select_image(self, img_data):
+        """
+        Immediately advances to the next card, and fires off the Anki update
+        as a background task so the user doesn't have to wait.
+        """
+        from nicegui import context as ng_context
+        # Capture context NOW, before we lose it in the background task
+        current_client = ng_context.client
         
-        try:
-            term = self.logic.apply_image_to_card(img_data)
-            notify(f"Updated '{term}'!", type='positive')
-            self.next_card()
-        except ActionError as e:
-            notify(str(e), type='negative')
-        except Exception as e:
-            logger.exception("Error applying image")
-            notify(f"Unexpected error: {e}", type='negative')
-            
-    def skip_card(self):
-        term = self.logic.skip_card()
+        # Snapshot the current card state BEFORE advancing to the next card.
+        # The background task runs later, by which point self.logic.current_note
+        # has already moved on — this prevents updating the wrong card.
+        snapshot_note = self.logic.current_note
+        snapshot_term = self.logic.current_term
+
+        async def _background_update():
+            with current_client:  # Restore NiceGUI slot context for UI calls
+                try:
+                    updated_term = await self.logic.apply_image_to_card(
+                        img_data,
+                        note=snapshot_note,
+                        term=snapshot_term,
+                    )
+                    logger.info(f"Background update complete for '{updated_term}'")
+                    notify(f"✅ Saved '{updated_term}'", type='positive')
+                except ActionError as e:
+                    notify(str(e), type='negative')
+                    logger.error(f"Background update failed: {e}")
+                except Exception as e:
+                    logger.exception("Unexpected error in background image update")
+                    notify(f"Error saving image: {e}", type='negative')
+
+        # Fire off the background Anki update — user won't wait for this
+        asyncio.create_task(_background_update())
+        notify(f"Saving '{snapshot_term}' in background...", type='info')
+        # Immediately advance to the next card in context
+        await self.next_card()
+
+    async def skip_card(self):
+        term = await self.logic.skip_card()
         if term:
             notify(f"Skipped '{term}'", type='warning')
-        self.next_card()
+        await self.next_card()
 
     def build_settings_dialog(self):
         with ui.dialog() as settings_dialog, ui.card().classes('w-full max-w-lg'):
@@ -157,7 +182,6 @@ class AppUI:
 
     def build_left_panel(self):
         with ui.card().classes('w-1/4 min-w-[200px] p-2 bg-gray-50'):
-            # Context Info (Tibetan)
             if self.logic.current_note:
                  tibetan_val = self.logic.current_note['fields'].get('Tibetan', {}).get('value', '')
                  if tibetan_val:
@@ -200,9 +224,9 @@ class AppUI:
             if not self.loaded_images and not append:
                 ui.label(f"Loading from {self.current_provider.capitalize()}...").classes('animate-pulse text-blue-500')
 
-            def fetch_and_show():
+            async def fetch_and_show():
                 try:
-                    new_images = self.searcher.search(
+                    new_images = await self.searcher.search(
                         self.current_provider, 
                         self.logic.current_term, 
                         count=self.logic.count, 
@@ -220,9 +244,9 @@ class AppUI:
                     with self.results_area:
                         with ui.grid(columns=3).classes('w-full gap-4'):
                             for img in self.loaded_images:
-                                with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 transition-all p-0') as card:
+                                # Removed transition-all to keep hover snappy  
+                                with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 p-0') as card:
                                     ui.image(img['thumb']).classes('h-48 w-full object-cover')
-                                    # Need a default arg binding for the lambda loop
                                     card.on('click', lambda _, i=img: self.select_image(i))
                         
                         ui.button("Load More Results", on_click=self.load_more_images) \
@@ -244,15 +268,15 @@ class AppUI:
 
             ui.timer(0.1, fetch_and_show, once=True)
 
+
 def parse_arguments():
     config = ConfigManager()
     parser = argparse.ArgumentParser(description="Anki Image Fetcher GUI")
     parser.add_argument("--deck", default=None)
-    # The rest are handled via config mostly now or defaults
     return parser.parse_args()
 
 @ui.page('/')
-def index_page():
+async def index_page():
     args = parse_arguments()
     config = ConfigManager()
     anki = AnkiClient()
@@ -282,17 +306,15 @@ def index_page():
         else:
             with app_ui.main_container:
                 ui.label("Select a Deck to Begin:").classes('text-lg mb-2')
-                decks = anki.fetch_decks()
+                decks = await anki.fetch_decks()
                 if decks:
                     select = ui.select(decks, label="Deck").classes('w-1/2')
+                    # Pass the coroutine directly — NiceGUI awaits it with correct context
                     ui.button("Start", on_click=lambda: app_ui.start_deck_load(select.value)).classes('bg-blue-600 mt-4')
                 else:
                     ui.label("Could not fetch decks. Is Anki running?").classes('text-red-500')
 
 def start_app():
-    import asyncio
-    import webbrowser
-    
     async def check_shutdown():
         print("🔌 Client disconnected. Waiting 4s to see if it's a refresh...", flush=True)
         await asyncio.sleep(4.0)
@@ -306,6 +328,7 @@ def start_app():
     app.on_disconnect(lambda: asyncio.create_task(check_shutdown()))
 
     def open_browser():
+        import webbrowser
         webbrowser.open("http://localhost:8080/")
     
     app.on_startup(open_browser)

@@ -1,10 +1,10 @@
-import requests
+import httpx
 import logging
 
 logger = logging.getLogger(__name__)
 
 class ImageSearcher:
-    """Handles communicating with external image APIs."""
+    """Handles communicating with external image APIs asynchronously."""
     
     def __init__(self, config_manager):
         self.config = config_manager
@@ -16,31 +16,29 @@ class ImageSearcher:
                 raise ValueError("API key is invalid or unauthorized. Please check your settings.")
             response.raise_for_status()
             return response.json()
-        except requests.exceptions.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             logger.warning(f"HTTP Error: {e}")
             raise Exception(f"API Error ({response.status_code}): {e}")
-        except requests.exceptions.RequestException as e:
+        except httpx.RequestError as e:
             logger.warning(f"Connection Error: {e}")
             raise Exception(f"Connection failed: {e}")
 
-    def make_search_request(self, url, headers):
-        try:
-            r = requests.get(url, headers=headers)
+    async def make_search_request(self, url, headers):
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url, headers=headers)
             return self.parse_api_error(r)
-        except Exception as e:
-            raise e
 
-    def search(self, provider, query, count=1, page=1):
+    async def search(self, provider, query, count=1, page=1):
         if provider == 'pexels':
-            return self.search_pexels(query, count, page)
+            return await self.search_pexels(query, count, page)
         elif provider == 'unsplash':
-            return self.search_unsplash(query, count, page)
+            return await self.search_unsplash(query, count, page)
         elif provider == 'freepik':
-            return self.search_freepik(query, count, page)
+            return await self.search_freepik(query, count, page)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
-    def search_pexels(self, query, count=1, page=1):
+    async def search_pexels(self, query, count=1, page=1):
         """Searches Pexels."""
         api_key = self.config.get("PEXELS_API_KEY")
         if not api_key: 
@@ -49,7 +47,7 @@ class ImageSearcher:
         headers = {'Authorization': api_key}
         url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}&page={page}"
         
-        data = self.make_search_request(url, headers)
+        data = await self.make_search_request(url, headers)
         results = []
         if data.get('photos'):
             for photo in data['photos']:
@@ -61,7 +59,7 @@ class ImageSearcher:
                 })
         return results
 
-    def search_unsplash(self, query, count=1, page=1):
+    async def search_unsplash(self, query, count=1, page=1):
         """Searches Unsplash."""
         access_key = self.config.get("UNSPLASH_ACCESS_KEY")
         if not access_key:
@@ -70,7 +68,7 @@ class ImageSearcher:
         headers = {'Authorization': f'Client-ID {access_key}'}
         url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}&page={page}"
         
-        data = self.make_search_request(url, headers)
+        data = await self.make_search_request(url, headers)
         results = []
         if data.get('results'):
             for photo in data['results']:
@@ -82,7 +80,7 @@ class ImageSearcher:
                 })
         return results
 
-    def search_freepik(self, query, count=1, page=1):
+    async def search_freepik(self, query, count=1, page=1):
         """Searches Freepik."""
         api_key = self.config.get("FREEPIK_API_KEY")
         if not api_key: 
@@ -91,7 +89,7 @@ class ImageSearcher:
         headers = {'x-freepik-api-key': api_key}
         url = f"https://api.freepik.com/v1/resources?term={query}&limit={count}&page={page}"
         
-        data = self.make_search_request(url, headers)
+        data = await self.make_search_request(url, headers)
         results = []
         if data.get('data'):
             for item in data['data']:

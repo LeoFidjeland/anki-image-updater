@@ -2,7 +2,7 @@ import pytest
 import sys
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 
 # Ensure we can import from parent directory
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -12,11 +12,8 @@ from config_manager import ConfigManager
 @pytest.fixture
 def mock_config(tmp_path, monkeypatch):
     """Fixture to provide a ConfigManager using a temporary file."""
-    # Patch the user_config_dir to use tmp_path
     monkeypatch.setattr("config_manager.user_config_dir", lambda app, author: str(tmp_path))
-    
     cfg = ConfigManager()
-    # Reset to defaults for each test to be safe
     cfg._config = cfg.DEFAULT_CONFIG.copy()
     return cfg
 
@@ -26,8 +23,19 @@ def real_config():
     return ConfigManager()
 
 @pytest.fixture
-def mock_requests_get(monkeypatch):
-    """Fixture to mock requests.get"""
-    mock = MagicMock()
-    monkeypatch.setattr("requests.get", mock)
-    return mock
+def mock_httpx_get(monkeypatch):
+    """Fixture to mock httpx.AsyncClient.get (used in search_providers and utils)."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={})
+    mock_response.content = b"fake_image_data"
+    
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    
+    monkeypatch.setattr("httpx.AsyncClient", lambda **kwargs: mock_client)
+    return mock_client
