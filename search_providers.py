@@ -156,7 +156,12 @@ class ImageSearcher:
 
         results = []
         pages = data.get('query', {}).get('pages', {})
-        for page_data in pages.values():
+        # Wikimedia generator search returns "pages" as an object (dict),
+        # so iterating values() doesn't preserve ranking/offset order.
+        # The API includes an `index` field per result; sort by it so that
+        # pagination/truncation behaves predictably.
+        ordered_pages = sorted(pages.values(), key=lambda p: p.get('index', 0))
+        for page_data in ordered_pages:
             if len(results) >= count:
                 break
             imageinfo = page_data.get('imageinfo', [])
