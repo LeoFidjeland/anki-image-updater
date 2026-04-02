@@ -47,7 +47,7 @@ async def test_search_pexels_with_key_mocked(mock_config, mock_httpx):
     
     assert len(results) == 1
     assert results[0]["thumb"] == "thumb_url"
-    assert results[0]["provider"] == "pexels"
+    assert results[0]["provider"] == "Pexels"
 
 @pytest.mark.asyncio
 async def test_search_missing_provider_key(mock_config):
@@ -93,7 +93,7 @@ async def test_search_unsplash_with_key_mocked(mock_config, mock_httpx):
     assert results[0]["thumb"] == "unsplash_thumb"
     assert results[0]["full"] == "unsplash_full"
     assert results[0]["context_url"] == "unsplash_context"
-    assert results[0]["provider"] == "unsplash"
+    assert results[0]["provider"] == "Unsplash"
 
 @pytest.mark.asyncio
 async def test_search_freepik_with_key_mocked(mock_config, mock_httpx):
@@ -117,4 +117,4 @@ async def test_search_freepik_with_key_mocked(mock_config, mock_httpx):
     assert results[0]["thumb"] == "freepik_url"
     assert results[0]["full"] == "freepik_url"
     assert results[0]["context_url"] == "freepik_context"
-    assert results[0]["provider"] == "freepik"
+    assert results[0]["provider"] == "Freepik"

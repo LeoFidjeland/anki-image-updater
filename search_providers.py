@@ -1,5 +1,6 @@
 import httpx
 import logging
+import urllib.parse
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +89,33 @@ class ImageSearcher:
             raise ValueError("Freepik API key is missing. Please add it in Settings.")
         
         headers = {'x-freepik-api-key': api_key}
-        url = f"https://api.freepik.com/v1/resources?term={query}&limit={count}&page={page}"
+        # Freepik supports deepObject filters. Use license filtering so we
+        # prefer royalty-free assets over premium ones.
+        params = {
+            "term": query,
+            "limit": count,
+            "page": page,
+            "filters[license][freemium]": 1,
+        }
+        url = "https://api.freepik.com/v1/resources?" + urllib.parse.urlencode(params)
         
         data = await self.make_search_request(url, headers)
         results = []
         if data.get('data'):
             for item in data['data']:
+                # Defensive client-side filtering in case the API returns mixed license types.
+                licenses = item.get("licenses")
+                if isinstance(licenses, list):
+                    license_types = {
+                        lic.get("type")
+                        for lic in licenses
+                        if isinstance(lic, dict) and lic.get("type")
+                    }
+                    free_types = {"freemium", "essential"}
+                    if "premium" in license_types:
+                        continue
+                    if license_types and not (license_types & free_types):
+                        continue
                 if 'image' in item and 'source' in item['image']:
                      results.append({
                         'thumb': item['image']['source']['url'],

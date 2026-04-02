@@ -23,7 +23,7 @@ async def test_integration_pexels_async(real_config):
     assert "thumb" in results[0]
     assert "full" in results[0]
     assert "context_url" in results[0]
-    assert results[0]["provider"] == "pexels"
+    assert results[0]["provider"] == "Pexels"
 
 @pytest.mark.asyncio
 async def test_integration_unsplash_async(real_config):
@@ -39,7 +39,7 @@ async def test_integration_unsplash_async(real_config):
     assert "thumb" in results[0]
     assert "full" in results[0]
     assert "context_url" in results[0]
-    assert results[0]["provider"] == "unsplash"
+    assert results[0]["provider"] == "Unsplash"
 
 @pytest.mark.asyncio
 async def test_integration_freepik_async(real_config):
@@ -55,4 +55,9 @@ async def test_integration_freepik_async(real_config):
     assert "thumb" in results[0]
     assert "full" in results[0]
     assert "context_url" in results[0]
-    assert results[0]["provider"] == "freepik"
+    assert results[0]["provider"] == "Freepik"
+
+    # Heuristic check: Freepik's "premium" assets typically use "premium-*"
+    # in the asset URL path. Since we request freemium/essential only, we
+    # should not see "premium" in the returned image URL.
+    assert "premium" not in results[0]["thumb"].lower()

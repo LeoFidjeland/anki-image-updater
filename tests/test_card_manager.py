@@ -62,20 +62,20 @@ async def test_card_manager_apply_image_to_card(card_logic_manager, monkeypatch)
     
     img_data = {
         'full': 'http://fake.url/img.jpg',
-        'provider': 'pexels',
+        'provider': 'Pexels',
         'context_url': 'http://fake.url/context'
     }
     
     monkeypatch.setattr("core.download_image_as_base64", AsyncMock(return_value="fake_base64_data"))
     monkeypatch.setattr(core.time, 'time', lambda: 1234567890)
     
-    card_logic_manager.anki.store_media_file = AsyncMock(return_value="pexels_Dog_1234567890.jpg")
+    card_logic_manager.anki.store_media_file = AsyncMock(return_value="Pexels_Dog_1234567890.jpg")
     card_logic_manager.anki.update_note_fields = AsyncMock(return_value=None)
     card_logic_manager.anki.add_tags = AsyncMock(return_value=None)
     
     await card_logic_manager.apply_image_to_card(img_data)
     
-    expected_filename = "pexels_Dog_1234567890.jpg"
+    expected_filename = "Pexels_Dog_1234567890.jpg"
     card_logic_manager.anki.store_media_file.assert_awaited_once_with(expected_filename, "fake_base64_data")
     card_logic_manager.anki.update_note_fields.assert_awaited_once()
     card_logic_manager.anki.add_tags.assert_awaited_once()
