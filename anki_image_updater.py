@@ -356,10 +356,14 @@ class AppUI:
                         self.results_area.clear()
                         
                         with self.results_area:
-                            with ui.grid(columns=3).classes('w-full gap-4'):
+                            # Multi-column layout: 3 columns, items stack with natural image height (masonry-like).
+                            with ui.element('div').classes('w-full columns-3 gap-4'):
                                 for img in self.loaded_images:
-                                    with ui.card().classes('cursor-pointer hover:ring-4 hover:ring-green-400 p-0') as card:
-                                        ui.image(img['thumb']).classes('h-48 w-full object-cover')
+                                    with ui.card().classes(
+                                        'w-full max-w-full break-inside-avoid mb-4 cursor-pointer '
+                                        'hover:ring-4 hover:ring-green-400 p-0 overflow-hidden rounded'
+                                    ) as card:
+                                        ui.image(img['thumb']).classes('w-full h-auto block')
                                         card.on('click', lambda _, i=img: self.select_image(i))
                             
                             ui.button("Load More Results", on_click=self.load_more_images) \
