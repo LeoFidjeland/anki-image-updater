@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import asyncio
 import argparse
 import logging
@@ -50,6 +51,8 @@ class AppUI:
         self._result_columns = None  # list of 3 vertical stacks (kept when appending pages)
         self._load_more_btn = None
         self._load_more_in_progress = False
+        self._session_skipped = 0
+        self._session_replaced = 0
 
         # UI Elements
         self.status_label = None
@@ -78,13 +81,19 @@ class AppUI:
                 with self.main_container:
                     ui.label(f"⚠️ {message}").classes('text-orange-500 text-lg py-8')
             return
+        self._session_skipped = 0
+        self._session_replaced = 0
         await self.next_card()
 
     async def next_card(self):
         found = await self.logic.advance_to_next_valid_card()
         if not found:
             notify("All cards processed!", type='positive')
-            if self.status_label: self.status_label.set_text("All Done!")
+            if self.status_label:
+                self.status_label.set_text(
+                    f"0 Remaining | {self._session_skipped} Skipped | "
+                    f"{self._session_replaced} Replaced — All done!"
+                )
             if self.main_container: self.main_container.clear()
             return
             
@@ -218,6 +227,8 @@ class AppUI:
                         term=snapshot_term,
                     )
                     logger.info(f"Background update complete for '{updated_term}'")
+                    self._session_replaced += 1
+                    self._update_status_bar()
                     notify(f"✅ Saved '{updated_term}'", type='positive')
                 except ActionError as e:
                     notify(str(e), type='negative')
@@ -241,6 +252,7 @@ class AppUI:
         try:
             term = await self.logic.skip_card()
             if term:
+                self._session_skipped += 1
                 notify(f"Skipped '{term}'", type='warning')
             await self.next_card()
         finally:
@@ -305,11 +317,27 @@ class AppUI:
                     ui.button("Save", on_click=save_settings).classes('bg-blue-600')
         return settings_dialog
 
+    def _update_status_bar(self):
+        if not self.status_label:
+            return
+        if not self.logic.valid_notes:
+            self.status_label.set_text("Ready to start...")
+            return
+        remaining = self.logic.get_remaining_count()
+        self.status_label.set_text(
+            f"{remaining} Remaining | {self._session_skipped} Skipped | {self._session_replaced} Replaced"
+        )
+
+    @staticmethod
+    def _strip_html_to_plain(html: str) -> str:
+        if not html:
+            return ""
+        s = re.sub(r"<[^>]+>", " ", html)
+        return re.sub(r"\s+", " ", s).strip()
+
     def refresh_ui_content(self):
-        if self.status_label:
-            count = self.logic.get_remaining_count()
-            self.status_label.set_text(f"Processing: {self.logic.current_term} ({count} left)")
-            
+        self._update_status_bar()
+
         if self.main_container:
             self.main_container.clear()
             with self.main_container:
@@ -335,19 +363,82 @@ class AppUI:
             render_provider_btn('pixabay')
             render_provider_btn('wikimedia')
 
-    def build_left_panel(self):
-        with ui.card().classes('w-1/4 min-w-[200px] p-2 bg-gray-50'):
-            if self.logic.current_note:
-                 tibetan_val = self.logic.current_note['fields'].get('Tibetan', {}).get('value', '')
-                 if tibetan_val:
-                      ui.label("Tibetan:").classes('text-xs font-bold text-gray-500 mt-2')
-                      ui.html(tibetan_val, sanitize=False).classes('text-2xl text-center my-2 text-purple-800')
+    def _left_panel_heading(self, title: str):
+        ui.label(title).classes(
+            'text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1'
+        )
 
-            ui.label("Current Image").classes('text-sm font-bold text-gray-500 mb-2')
-            if self.logic.current_old_image_b64:
-                ui.image(self.logic.current_old_image_b64).classes('w-full rounded mb-4')
-            else:
-                ui.label("No Image").classes('text-gray-400 italic text-center py-10 mb-4')
+    def _left_panel_large_html(self, raw: str):
+        ui.html(raw, sanitize=False).classes(
+            'text-xl sm:text-2xl leading-snug text-purple-900 font-medium break-words '
+            'text-center w-full'
+        )
+
+    def _left_panel_large_plain(self, text: str):
+        ui.label(text).classes(
+            'text-xl sm:text-2xl leading-snug text-slate-900 font-medium break-words'
+        )
+
+    def _left_panel_body(self, raw: str):
+        plain = self._strip_html_to_plain(raw)
+        if not plain:
+            return
+        ui.label(plain).classes(
+            'text-sm text-slate-700 leading-relaxed break-words whitespace-pre-wrap'
+        )
+
+    def build_left_panel(self):
+        with ui.card().classes(
+            'w-[min(100%,28rem)] min-w-[220px] max-w-md flex-shrink-0 p-4 bg-slate-50 '
+            'border border-slate-200/90 rounded-xl shadow-sm'
+        ):
+            with ui.column().classes('w-full gap-4'):
+                note = self.logic.current_note
+                if not note:
+                    ui.label("No card loaded.").classes('text-slate-400 text-sm')
+                    return
+
+                fields = note['fields']
+
+                # Tibetan
+                tibetan_val = fields.get('Tibetan', {}).get('value', '').strip()
+                if tibetan_val:
+                    self._left_panel_heading('Tibetan')
+                    self._left_panel_large_html(tibetan_val)
+
+                # English (configured search term field, e.g. English)
+                term = self.logic.current_term
+                if term:
+                    self._left_panel_heading(self.logic.field_term)
+                    self._left_panel_large_plain(term)
+
+                ui.separator().classes('opacity-60')
+
+                # Current image
+                self._left_panel_heading('Image')
+                if self.logic.current_old_image_b64:
+                    ui.image(self.logic.current_old_image_b64).classes(
+                        'w-full rounded-lg border border-slate-200 shadow-md'
+                    )
+                else:
+                    ui.label("No image yet").classes(
+                        'text-slate-400 italic text-sm py-6 text-center border border-dashed '
+                        'border-slate-200 rounded-lg w-full'
+                    )
+
+                for label, key in (
+                    ('Notes', 'Notes'),
+                    ('Acceptions', 'Acceptions'),
+                    ('Syllables', 'Syllables'),
+                    ('Example Sentence Tibetan', 'Example Sentence Tibetan'),
+                    ('Example Sentence English', 'Example Sentence English'),
+                ):
+                    raw = fields.get(key, {}).get('value', '').strip()
+                    if not raw:
+                        continue
+                    ui.separator().classes('opacity-60')
+                    self._left_panel_heading(label)
+                    self._left_panel_body(raw)
 
     def build_right_panel(self):
         with ui.column().classes('flex-1'):
@@ -511,7 +602,9 @@ async def index_page():
     with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
         with ui.row().classes('w-full justify-between items-center mb-4'):
             ui.label("Anki Image Updater").classes('text-2xl font-bold')
-            app_ui.status_label = ui.label("Ready to start...").classes('text-xl text-blue-600 font-semibold')
+            app_ui.status_label = ui.label("Ready to start...").classes(
+                'text-base sm:text-lg text-slate-700 font-medium tabular-nums'
+            )
         
         app_ui.main_container = ui.column().classes('w-full min-h-[500px] border border-gray-200 rounded-lg p-4 bg-white shadow-sm')
         settings_dialog = app_ui.build_settings_dialog()
