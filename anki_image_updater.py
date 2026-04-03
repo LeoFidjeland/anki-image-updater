@@ -153,7 +153,17 @@ class AppUI:
             self._prefetch_task.cancel()
         self._prefetch_task = None
         self._fetch_generation += 1
-        self.refresh_ui_content()
+        self._refresh_provider_ui()
+
+    def _refresh_provider_ui(self):
+        """Provider buttons + search results only; keep card info column (left) to avoid flicker."""
+        self._update_status_bar()
+        if self.provider_slot:
+            self.provider_slot.clear()
+            with self.provider_slot:
+                self.build_provider_toggles()
+        if self.results_area:
+            self.refresh_results(append=False)
 
     def load_more_images(self):
         if self._load_more_in_progress:
@@ -211,7 +221,7 @@ class AppUI:
                     slot.classes('aspect-[4/3]')
                 ui.image(img['thumb']).classes(
                     'absolute inset-0 w-full h-full object-contain'
-                ).props('loading=lazy')
+                ).props('loading=lazy no-transition')
             card.on('click', lambda _, i=img: self.select_image(i))
 
     async def select_image(self, img_data):
@@ -388,6 +398,7 @@ class AppUI:
         return re.sub(r"\s+", " ", s).strip()
 
     def refresh_ui_content(self):
+        """Full main-area rebuild (new card): search bar, left panel, and results grid."""
         self._update_status_bar()
 
         if self.provider_slot:
@@ -512,7 +523,7 @@ class AppUI:
                 if self.logic.current_old_image_b64:
                     ui.image(self.logic.current_old_image_b64).classes(
                         'w-full rounded-lg border border-slate-200 shadow-md'
-                    )
+                    ).props('no-transition')
                 else:
                     ui.label("No image yet").classes(
                         'text-slate-400 italic text-sm py-6 text-center border border-dashed '
@@ -670,6 +681,12 @@ def parse_arguments():
 
 @ui.page('/')
 async def index_page():
+    # QImg defaults to a fade transition; disable for instant paint (see Quasar QImg).
+    ui.add_css(
+        '.q-img .q-img__image { transition: none !important; }\n'
+        '.q-img .q-img__content { transition: none !important; }'
+    )
+
     args = parse_arguments()
     config = ConfigManager()
     anki = AnkiClient()
