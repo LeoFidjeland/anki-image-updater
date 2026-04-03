@@ -193,6 +193,7 @@ class AppUI:
                 ui.input("Pexels API Key",      value=cfg.get("PEXELS_API_KEY"),    on_change=lambda e: cfg_vals.__setitem__('pexels',    e.value)).props('type=password outlined dense').classes('w-full')
                 ui.input("Unsplash Access Key", value=cfg.get("UNSPLASH_ACCESS_KEY"), on_change=lambda e: cfg_vals.__setitem__('unsplash', e.value)).props('type=password outlined dense').classes('w-full')
                 ui.input("Freepik API Key",     value=cfg.get("FREEPIK_API_KEY"),   on_change=lambda e: cfg_vals.__setitem__('freepik',   e.value)).props('type=password outlined dense').classes('w-full')
+                ui.input("Pixabay API Key",     value=cfg.get("PIXABAY_API_KEY"),   on_change=lambda e: cfg_vals.__setitem__('pixabay',   e.value)).props('type=password outlined dense').classes('w-full')
 
                 with ui.expansion("Advanced", icon="tune").classes('w-full mt-2 border rounded'):
                     with ui.column().classes('w-full gap-2 p-2'):
@@ -213,6 +214,7 @@ class AppUI:
                         'pexels':         cfg.get("PEXELS_API_KEY"),
                         'unsplash':       cfg.get("UNSPLASH_ACCESS_KEY"),
                         'freepik':        cfg.get("FREEPIK_API_KEY"),
+                        'pixabay':        cfg.get("PIXABAY_API_KEY"),
                         'field_search':   cfg.get("DEFAULT_FIELD_SEARCH"),
                         'field_image':    cfg.get("DEFAULT_FIELD_IMAGE"),
                         'field_source':   cfg.get("DEFAULT_FIELD_SOURCE"),
@@ -224,6 +226,7 @@ class AppUI:
                         cfg.set("PEXELS_API_KEY",        cfg_vals['pexels'].strip())
                         cfg.set("UNSPLASH_ACCESS_KEY",   cfg_vals['unsplash'].strip())
                         cfg.set("FREEPIK_API_KEY",       cfg_vals['freepik'].strip())
+                        cfg.set("PIXABAY_API_KEY",       cfg_vals['pixabay'].strip())
                         cfg.set("DEFAULT_FIELD_SEARCH",  cfg_vals['field_search'].strip())
                         cfg.set("DEFAULT_FIELD_IMAGE",   cfg_vals['field_image'].strip())
                         cfg.set("DEFAULT_FIELD_SOURCE",  cfg_vals['field_source'].strip())
@@ -266,6 +269,7 @@ class AppUI:
             render_provider_btn('pexels')
             render_provider_btn('unsplash')
             render_provider_btn('freepik')
+            render_provider_btn('pixabay')
             render_provider_btn('wikimedia')
 
     def build_left_panel(self):

@@ -1,10 +1,10 @@
 # Anki Image Updater
 
-A graphical tool to help you find and update images for your Anki cards using Pexels, Unsplash, and Freepik.
+A graphical tool to help you find and update images for your Anki cards using Pexels, Unsplash, Freepik, Pixabay, and Wikimedia Commons.
 
 ## Features
 - **Smart Filtering**: Automatically finds cards that need images (missing or placeholders).
-- **Multiple Providers**: Search images from Pexels, Unsplash, and Freepik.
+- **Multiple Providers**: Search images from Pexels, Unsplash, Freepik, Pixabay, and Wikimedia Commons.
 - **One-Click Update**: Select an image to automatically download it, update the card, and format the fields.
 - **Safety**: Skips cards that already have manually added sources.
 
@@ -46,7 +46,7 @@ If you want to contribute or modify the application, use `uv` to manage the proj
    *(Alternatively, you can run `uv run python anki_image_updater.py`)*
 
 ### Configuration
-The app will prompt you for API keys (Pexels, Unsplash, Freepik) upon first launch. Settings are securely saved to your user configuration directory.
+The app will prompt you for API keys (Pexels, Unsplash, Freepik, Pixabay) upon first launch. Wikimedia Commons does not require a key. Settings are saved to your user configuration directory.
 
 ### Running Tests
 To run the project's test suite, execute:

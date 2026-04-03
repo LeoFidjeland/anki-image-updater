@@ -11,6 +11,7 @@ class ConfigManager:
         "PEXELS_API_KEY": "",
         "UNSPLASH_ACCESS_KEY": "",
         "FREEPIK_API_KEY": "",
+        "PIXABAY_API_KEY": "",
         "DEFAULT_FIELD_SEARCH": "English",
         "DEFAULT_FIELD_IMAGE": "Image",
         "DEFAULT_FIELD_SOURCE": "Image Source",

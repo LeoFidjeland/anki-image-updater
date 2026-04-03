@@ -35,6 +35,8 @@ class ImageSearcher:
             return await self.search_unsplash(query, count, page)
         elif provider == 'freepik':
             return await self.search_freepik(query, count, page)
+        elif provider == 'pixabay':
+            return await self.search_pixabay(query, count, page)
         elif provider == 'wikimedia':
             return await self.search_wikimedia(query, count, page)
         else:
@@ -123,6 +125,35 @@ class ImageSearcher:
                         'context_url': item.get('url', '#'),
                         'provider': 'Freepik'
                     })
+        return results
+
+    async def search_pixabay(self, query, count=1, page=1):
+        """Searches Pixabay (https://pixabay.com/api/docs/)."""
+        api_key = self.config.get("PIXABAY_API_KEY")
+        if not api_key:
+            raise ValueError("Pixabay API key is missing. Please add it in Settings.")
+
+        # per_page must be 3–200; request enough rows then trim to count.
+        per_page = max(3, min(count, 200))
+        params = {
+            "key": api_key,
+            "q": query[:100],
+            "page": page,
+            "per_page": per_page,
+        }
+        url = "https://pixabay.com/api/?" + urllib.parse.urlencode(params)
+
+        data = await self.make_search_request(url, headers={})
+        results = []
+        for hit in data.get("hits", [])[:count]:
+            thumb = hit.get("previewURL") or hit.get("webformatURL", "")
+            full = hit.get("largeImageURL") or hit.get("webformatURL") or hit.get("fullHDURL", "")
+            results.append({
+                "thumb": thumb,
+                "full": full,
+                "context_url": hit.get("pageURL", ""),
+                "provider": "Pixabay",
+            })
         return results
 
     async def search_wikimedia(self, query, count=1, page=1):

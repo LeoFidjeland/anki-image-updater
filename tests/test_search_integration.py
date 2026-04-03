@@ -61,3 +61,19 @@ async def test_integration_freepik_async(real_config):
     # in the asset URL path. Since we request freemium/essential only, we
     # should not see "premium" in the returned image URL.
     assert "premium" not in results[0]["thumb"].lower()
+
+@pytest.mark.asyncio
+async def test_integration_pixabay_async(real_config):
+    """Real async integration test for Pixabay search."""
+    api_key = real_config.get("PIXABAY_API_KEY")
+    if not api_key:
+        pytest.skip("Pixabay API key not found in real config. Skipping integration test.")
+
+    searcher = ImageSearcher(real_config)
+    results = await searcher.search_pixabay("dog", count=1)
+
+    assert len(results) == 1
+    assert "thumb" in results[0]
+    assert "full" in results[0]
+    assert "context_url" in results[0]
+    assert results[0]["provider"] == "Pixabay"

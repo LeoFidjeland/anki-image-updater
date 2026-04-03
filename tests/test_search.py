@@ -54,12 +54,15 @@ async def test_search_missing_provider_key(mock_config):
     """Verify other providers raise if key missing."""
     mock_config.set("UNSPLASH_ACCESS_KEY", "")
     mock_config.set("FREEPIK_API_KEY", "")
+    mock_config.set("PIXABAY_API_KEY", "")
     
     searcher = ImageSearcher(mock_config)
     with pytest.raises(ValueError, match="Unsplash API key is missing."):
         await searcher.search_unsplash("test")
     with pytest.raises(ValueError, match="Freepik API key is missing."):
         await searcher.search_freepik("test")
+    with pytest.raises(ValueError, match="Pixabay API key is missing."):
+        await searcher.search_pixabay("test")
 
 @pytest.mark.asyncio
 async def test_make_search_request_401(mock_httpx):
@@ -118,3 +121,37 @@ async def test_search_freepik_with_key_mocked(mock_config, mock_httpx):
     assert results[0]["full"] == "freepik_url"
     assert results[0]["context_url"] == "freepik_context"
     assert results[0]["provider"] == "Freepik"
+
+@pytest.mark.asyncio
+async def test_search_pixabay_no_key(mock_config):
+    """Test that Pixabay search raises if no key."""
+    mock_config.set("PIXABAY_API_KEY", "")
+
+    searcher = ImageSearcher(mock_config)
+    with pytest.raises(ValueError, match="Pixabay API key is missing."):
+        await searcher.search_pixabay("test")
+
+@pytest.mark.asyncio
+async def test_search_pixabay_with_key_mocked(mock_config, mock_httpx):
+    """Test Pixabay search with mocked response."""
+    mock_config.set("PIXABAY_API_KEY", "fake_pixabay_key")
+
+    mock_client, mock_response = mock_httpx
+    mock_response.json.return_value = {
+        "hits": [
+            {
+                "previewURL": "pix_thumb",
+                "largeImageURL": "pix_full",
+                "pageURL": "pix_context",
+            }
+        ]
+    }
+
+    searcher = ImageSearcher(mock_config)
+    results = await searcher.search_pixabay("test", count=1)
+
+    assert len(results) == 1
+    assert results[0]["thumb"] == "pix_thumb"
+    assert results[0]["full"] == "pix_full"
+    assert results[0]["context_url"] == "pix_context"
+    assert results[0]["provider"] == "Pixabay"
