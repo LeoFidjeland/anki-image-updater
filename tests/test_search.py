@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from search_providers import ImageSearcher
+from search_providers import ImageSearcher, _parse_freepik_source_size, _thumb_dims
 
 @pytest.fixture
 def mock_httpx(monkeypatch):
@@ -37,7 +37,9 @@ async def test_search_pexels_with_key_mocked(mock_config, mock_httpx):
         "photos": [
             {
                 "src": {"medium": "thumb_url", "original": "full_url"},
-                "url": "context_url"
+                "url": "context_url",
+                "width": 1200,
+                "height": 800,
             }
         ]
     }
@@ -48,6 +50,8 @@ async def test_search_pexels_with_key_mocked(mock_config, mock_httpx):
     assert len(results) == 1
     assert results[0]["thumb"] == "thumb_url"
     assert results[0]["provider"] == "Pexels"
+    assert results[0]["thumb_width"] == 1200
+    assert results[0]["thumb_height"] == 800
 
 @pytest.mark.asyncio
 async def test_search_missing_provider_key(mock_config):
@@ -84,7 +88,9 @@ async def test_search_unsplash_with_key_mocked(mock_config, mock_httpx):
         "results": [
             {
                 "urls": {"small": "unsplash_thumb", "raw": "unsplash_full"},
-                "links": {"html": "unsplash_context"}
+                "links": {"html": "unsplash_context"},
+                "width": 4000,
+                "height": 3000,
             }
         ]
     }
@@ -97,6 +103,8 @@ async def test_search_unsplash_with_key_mocked(mock_config, mock_httpx):
     assert results[0]["full"] == "unsplash_full"
     assert results[0]["context_url"] == "unsplash_context"
     assert results[0]["provider"] == "Unsplash"
+    assert results[0]["thumb_width"] == 4000
+    assert results[0]["thumb_height"] == 3000
 
 @pytest.mark.asyncio
 async def test_search_freepik_with_key_mocked(mock_config, mock_httpx):
@@ -107,7 +115,7 @@ async def test_search_freepik_with_key_mocked(mock_config, mock_httpx):
     mock_response.json.return_value = {
         "data": [
             {
-                "image": {"source": {"url": "freepik_url"}},
+                "image": {"source": {"url": "freepik_url", "size": "800x600"}},
                 "url": "freepik_context"
             }
         ]
@@ -121,6 +129,8 @@ async def test_search_freepik_with_key_mocked(mock_config, mock_httpx):
     assert results[0]["full"] == "freepik_url"
     assert results[0]["context_url"] == "freepik_context"
     assert results[0]["provider"] == "Freepik"
+    assert results[0]["thumb_width"] == 800
+    assert results[0]["thumb_height"] == 600
 
 @pytest.mark.asyncio
 async def test_search_pixabay_no_key(mock_config):
@@ -143,6 +153,8 @@ async def test_search_pixabay_with_key_mocked(mock_config, mock_httpx):
                 "previewURL": "pix_thumb",
                 "largeImageURL": "pix_full",
                 "pageURL": "pix_context",
+                "previewWidth": 150,
+                "previewHeight": 99,
             }
         ]
     }
@@ -155,3 +167,18 @@ async def test_search_pixabay_with_key_mocked(mock_config, mock_httpx):
     assert results[0]["full"] == "pix_full"
     assert results[0]["context_url"] == "pix_context"
     assert results[0]["provider"] == "Pixabay"
+    assert results[0]["thumb_width"] == 150
+    assert results[0]["thumb_height"] == 99
+
+
+def test_parse_freepik_source_size():
+    assert _parse_freepik_source_size({"source": {"size": "740x640"}}) == (740, 640)
+    assert _parse_freepik_source_size({"source": {"size": "740×640"}}) == (740, 640)
+    assert _parse_freepik_source_size({"source": {}}) == (None, None)
+    assert _parse_freepik_source_size(None) == (None, None)
+
+
+def test_thumb_dims():
+    assert _thumb_dims(100, 50) == {"thumb_width": 100, "thumb_height": 50}
+    assert _thumb_dims(None, 50) == {}
+    assert _thumb_dims(0, 100) == {}

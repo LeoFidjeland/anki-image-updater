@@ -30,6 +30,11 @@ def notify(msg, type='info'):
     ui.notify(msg, type=type, position='bottom-left')
 
 class AppUI:
+    # `gap-4` in Tailwind ≈ 1rem (16px). Normalized by a reference column width so it
+    # adds to the same scale as th/tw height ratios when balancing columns.
+    _GAP_PX = 16
+    _REFERENCE_COLUMN_WIDTH_PX = 400
+
     def __init__(self, logic: CardManagerLogic, searcher: ImageSearcher, args):
         self.logic = logic
         self.searcher = searcher
@@ -42,7 +47,10 @@ class AppUI:
         self._prefetch_task = None  # Background search pre-fetch
         self._is_navigating = False  # Guard against double-clicks during async navigation
         self._fetch_generation = 0  # Incremented on every new search; stale tasks self-discard
-        
+        self._result_columns = None  # list of 3 vertical stacks (kept when appending pages)
+        self._load_more_btn = None
+        self._load_more_in_progress = False
+
         # UI Elements
         self.status_label = None
         self.main_container = None
@@ -117,8 +125,63 @@ class AppUI:
         self.refresh_ui_content()
 
     def load_more_images(self):
+        if self._load_more_in_progress:
+            return
         self.current_page += 1
         self.refresh_results(append=True)
+
+    @staticmethod
+    def _normalized_height_ratio(img):
+        """
+        Predicted stacked height at a fixed column width (proportional to th/tw).
+        Matches the UI fallback when dimensions are missing (aspect 4:3 → h/w = 3/4).
+        """
+        tw, th = img.get('thumb_width'), img.get('thumb_height')
+        if tw and th and tw > 0 and th > 0:
+            return th / tw
+        return 3.0 / 4.0
+
+    @classmethod
+    def _gap_height_ratio(cls):
+        """Vertical gap between stacked cards (gap-4), as height / reference column width."""
+        return cls._GAP_PX / cls._REFERENCE_COLUMN_WIDTH_PX
+
+    @staticmethod
+    def _balanced_column_indices(images):
+        """
+        Greedy shortest-column: each image goes to the column with smallest predicted height.
+        Height sums image th/tw ratios plus one gap between each pair of stacked items.
+        """
+        heights = [0.0, 0.0, 0.0]
+        counts = [0, 0, 0]
+        gap = AppUI._gap_height_ratio()
+        columns = []
+        for img in images:
+            r = AppUI._normalized_height_ratio(img)
+            c = min(range(3), key=lambda i: heights[i])
+            if counts[c] > 0:
+                heights[c] += gap
+            heights[c] += r
+            counts[c] += 1
+            columns.append(c)
+        return columns
+
+    def _render_image_card(self, img):
+        """One clickable thumbnail card; must be used inside one of the three column stacks."""
+        with ui.card().classes(
+            'w-full max-w-full min-w-0 cursor-pointer '
+            'hover:ring-4 hover:ring-green-400 p-0 overflow-hidden rounded'
+        ) as card:
+            tw, th = img.get('thumb_width'), img.get('thumb_height')
+            with ui.element('div').classes('w-full relative bg-gray-100') as slot:
+                if tw and th:
+                    slot.style(f'aspect-ratio: {tw} / {th}')
+                else:
+                    slot.classes('aspect-[4/3]')
+                ui.image(img['thumb']).classes(
+                    'absolute inset-0 w-full h-full object-contain'
+                ).props('loading=lazy')
+            card.on('click', lambda _, i=img: self.select_image(i))
 
     async def select_image(self, img_data):
         """
@@ -313,6 +376,8 @@ class AppUI:
         if not append:
             self.loaded_images = []
             self.results_area.clear()
+            self._result_columns = None
+            self._load_more_btn = None
             self._fetch_generation += 1
 
         my_generation = self._fetch_generation
@@ -331,61 +396,94 @@ class AppUI:
 
             async def fetch_and_show():
                 with current_client:  # Restore slot context so notify() and ui.* work
+                    if append:
+                        self._load_more_in_progress = True
+                        if self._load_more_btn:
+                            self._load_more_btn.disable()
                     try:
-                        # Use the pre-fetched task if it belongs to this same generation
-                        if self._prefetch_task and not append and getattr(self, '_prefetch_generation', -1) == my_generation:
-                            task = self._prefetch_task
-                            self._prefetch_task = None
-                            new_images = await task
-                        else:
-                            new_images = await self._do_search(provider, term, page)
+                        try:
+                            # Use the pre-fetched task if it belongs to this same generation
+                            if self._prefetch_task and not append and getattr(self, '_prefetch_generation', -1) == my_generation:
+                                task = self._prefetch_task
+                                self._prefetch_task = None
+                                new_images = await task
+                            else:
+                                new_images = await self._do_search(provider, term, page)
 
-                        # Stale check: discard if a newer search started while we were awaiting
-                        if self._fetch_generation != my_generation:
-                            logger.debug(f"Discarding stale search (gen {my_generation})")
-                            return
+                            # Stale check: discard if a newer search started while we were awaiting
+                            if self._fetch_generation != my_generation:
+                                logger.debug(f"Discarding stale search (gen {my_generation})")
+                                return
 
-                        if not new_images:
-                            self.results_area.clear()
-                            with self.results_area:
-                                ui.label("🔍 No results found").classes('text-gray-500 text-xl font-bold mt-4')
-                                ui.label(f"Try a different search term or switch provider.").classes('text-gray-400 mt-1')
-                            return
+                            if not new_images:
+                                if append:
+                                    self.current_page -= 1
+                                    notify("No more results for this search.", type='info')
+                                    return
+                                self.results_area.clear()
+                                with self.results_area:
+                                    ui.label("🔍 No results found").classes('text-gray-500 text-xl font-bold mt-4')
+                                    ui.label(f"Try a different search term or switch provider.").classes('text-gray-400 mt-1')
+                                return
 
-                        self.loaded_images.extend(new_images)
-                        self.results_area.clear()
-                        
-                        with self.results_area:
-                            # Multi-column layout: 3 columns, items stack with natural image height (masonry-like).
-                            with ui.element('div').classes('w-full columns-3 gap-4'):
-                                for img in self.loaded_images:
-                                    with ui.card().classes(
-                                        'w-full max-w-full break-inside-avoid mb-4 cursor-pointer '
-                                        'hover:ring-4 hover:ring-green-400 p-0 overflow-hidden rounded'
-                                    ) as card:
-                                        ui.image(img['thumb']).classes('w-full h-auto block')
-                                        card.on('click', lambda _, i=img: self.select_image(i))
-                            
-                            ui.button("Load More Results", on_click=self.load_more_images) \
-                                .classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
+                            self.loaded_images.extend(new_images)
 
-                    except asyncio.CancelledError:
-                        pass  # Prefetch was cancelled (e.g. provider switched) — silently stop
-                    except ValueError as e:
-                        if self._fetch_generation != my_generation: return
-                        self.results_area.clear()
-                        notify(str(e), type='negative')
-                        with self.results_area:
-                            ui.label("⚠️ Authentication Error").classes('text-red-600 text-xl font-bold mt-4')
-                            ui.label(str(e)).classes('text-red-500 text-lg')
-                            ui.label("Click the Settings gear icon in the top right to update your API key.").classes('text-gray-600 mt-2')
-                    except Exception as e:
-                        if self._fetch_generation != my_generation: return
-                        self.results_area.clear()
-                        notify(f"API Error: {str(e)}", type='negative')
-                        with self.results_area:
-                            ui.label("⚠️ Connection Error").classes('text-orange-600 text-xl font-bold mt-4')
-                            ui.label(f"Failed to fetch from {provider}: {str(e)}").classes('text-orange-500 text-lg')
+                            if append and self._result_columns is not None:
+                                # Recompute full assignment so it matches a fresh build; only render new indices.
+                                cols_ix = self._balanced_column_indices(self.loaded_images)
+                                start = len(self.loaded_images) - len(new_images)
+                                for i in range(start, len(self.loaded_images)):
+                                    with self._result_columns[cols_ix[i]]:
+                                        self._render_image_card(self.loaded_images[i])
+                            else:
+                                self.results_area.clear()
+                                self._result_columns = None
+                                with self.results_area:
+                                    # Three stacks; greedy balance using thumb aspect ratios (th/tw).
+                                    cols_ix = self._balanced_column_indices(self.loaded_images)
+                                    with ui.row().classes('w-full gap-4 items-start'):
+                                        self._result_columns = []
+                                        for _ in range(3):
+                                            with ui.column().classes('flex-1 min-w-0 gap-4') as c:
+                                                self._result_columns.append(c)
+                                        for img, c in zip(self.loaded_images, cols_ix):
+                                            with self._result_columns[c]:
+                                                self._render_image_card(img)
+                                    self._load_more_btn = ui.button(
+                                        "Load More Results",
+                                        on_click=self.load_more_images,
+                                    ).classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
+
+                        except asyncio.CancelledError:
+                            pass  # Prefetch was cancelled (e.g. provider switched) — silently stop
+                        except ValueError as e:
+                            if self._fetch_generation != my_generation:
+                                return
+                            if append:
+                                self.current_page -= 1
+                            notify(str(e), type='negative')
+                            if not append:
+                                self.results_area.clear()
+                                with self.results_area:
+                                    ui.label("⚠️ Authentication Error").classes('text-red-600 text-xl font-bold mt-4')
+                                    ui.label(str(e)).classes('text-red-500 text-lg')
+                                    ui.label("Click the Settings gear icon in the top right to update your API key.").classes('text-gray-600 mt-2')
+                        except Exception as e:
+                            if self._fetch_generation != my_generation:
+                                return
+                            if append:
+                                self.current_page -= 1
+                            notify(f"API Error: {str(e)}", type='negative')
+                            if not append:
+                                self.results_area.clear()
+                                with self.results_area:
+                                    ui.label("⚠️ Connection Error").classes('text-orange-600 text-xl font-bold mt-4')
+                                    ui.label(f"Failed to fetch from {provider}: {str(e)}").classes('text-orange-500 text-lg')
+                    finally:
+                        if append:
+                            self._load_more_in_progress = False
+                            if self._load_more_btn:
+                                self._load_more_btn.enable()
 
             asyncio.create_task(fetch_and_show())
 

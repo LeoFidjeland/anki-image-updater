@@ -1,8 +1,35 @@
 import httpx
 import logging
+import re
 import urllib.parse
 
 logger = logging.getLogger(__name__)
+
+
+def _thumb_dims(width, height):
+    """Return dict with thumb_width/thumb_height if both are positive ints, else {}."""
+    try:
+        w, h = int(width), int(height)
+    except (TypeError, ValueError):
+        return {}
+    if w > 0 and h > 0:
+        return {"thumb_width": w, "thumb_height": h}
+    return {}
+
+
+def _parse_freepik_source_size(image_obj):
+    """Parse image.source.size like '740x640' or '740×640' into (w, h)."""
+    if not isinstance(image_obj, dict):
+        return None, None
+    src = image_obj.get("source") or {}
+    size = src.get("size")
+    if not size:
+        return None, None
+    size_str = str(size).replace("\u00d7", "x").replace("×", "x")
+    m = re.match(r"^\s*(\d+)\s*[xX]\s*(\d+)\s*$", size_str)
+    if not m:
+        return None, None
+    return int(m.group(1)), int(m.group(2))
 
 class ImageSearcher:
     """Handles communicating with external image APIs asynchronously."""
@@ -59,7 +86,8 @@ class ImageSearcher:
                     'thumb': photo['src']['medium'],
                     'full': photo['src']['original'],
                     'context_url': photo['url'],
-                    'provider': 'Pexels'
+                    'provider': 'Pexels',
+                    **_thumb_dims(photo.get('width'), photo.get('height')),
                 })
         return results
 
@@ -80,7 +108,8 @@ class ImageSearcher:
                     'thumb': photo['urls']['small'],
                     'full': photo['urls']['raw'],
                     'context_url': photo['links']['html'],
-                    'provider': 'Unsplash'
+                    'provider': 'Unsplash',
+                    **_thumb_dims(photo.get('width'), photo.get('height')),
                 })
         return results
 
@@ -119,11 +148,13 @@ class ImageSearcher:
                     if license_types and not (license_types & free_types):
                         continue
                 if 'image' in item and 'source' in item['image']:
-                     results.append({
+                    fw, fh = _parse_freepik_source_size(item['image'])
+                    results.append({
                         'thumb': item['image']['source']['url'],
                         'full': item['image']['source']['url'],
                         'context_url': item.get('url', '#'),
-                        'provider': 'Freepik'
+                        'provider': 'Freepik',
+                        **_thumb_dims(fw, fh),
                     })
         return results
 
@@ -153,6 +184,7 @@ class ImageSearcher:
                 "full": full,
                 "context_url": hit.get("pageURL", ""),
                 "provider": "Pixabay",
+                **_thumb_dims(hit.get("previewWidth"), hit.get("previewHeight")),
             })
         return results
 
@@ -205,10 +237,13 @@ class ImageSearcher:
                 continue
             title = page_data.get('title', '')
             context_url = "https://commons.wikimedia.org/wiki/" + urllib.parse.quote(title.replace(' ', '_'))
+            tw = info.get('thumbwidth') or info.get('width')
+            th = info.get('thumbheight') or info.get('height')
             results.append({
                 'thumb': info.get('thumburl', info.get('url', '')),
                 'full': info.get('url', ''),
                 'context_url': context_url,
                 'provider': 'Wikimedia',
+                **_thumb_dims(tw, th),
             })
         return results
