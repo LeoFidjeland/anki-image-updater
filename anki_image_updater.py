@@ -55,7 +55,13 @@ class AppUI:
         self._session_replaced = 0
 
         # UI Elements
-        self.status_label = None
+        self.status_label_idle = None
+        self.status_stats_row = None
+        self.status_remaining = None
+        self.status_skipped = None
+        self.status_replaced = None
+        self.provider_slot = None
+        self.search_bar_slot = None
         self.main_container = None
         self.results_area = None
 
@@ -66,20 +72,32 @@ class AppUI:
     async def load_cards(self):
         # Show loading state immediately (synchronous, before any await)
         # so the user gets instant feedback instead of a frozen UI.
+        if self.provider_slot:
+            self.provider_slot.clear()
+        if self.search_bar_slot:
+            self.search_bar_slot.clear()
         if self.main_container:
             self.main_container.clear()
             with self.main_container:
                 ui.label("Scanning deck...").classes('text-blue-500 animate-pulse text-lg py-8')
-        if self.status_label:
-            self.status_label.set_text("Loading...")
+        if self.status_label_idle:
+            self.status_label_idle.set_text("Loading...")
+            self.status_label_idle.visible = True
+        if self.status_stats_row:
+            self.status_stats_row.visible = False
 
         success, message = await self.logic.load_deck(self.args.deck)
         if not success:
             notify(message, type='warning')
+            if self.search_bar_slot:
+                self.search_bar_slot.clear()
             if self.main_container:
                 self.main_container.clear()
                 with self.main_container:
                     ui.label(f"⚠️ {message}").classes('text-orange-500 text-lg py-8')
+            self._set_status_idle()
+            if self.status_label_idle:
+                self.status_label_idle.set_text("Ready to start...")
             return
         self._session_skipped = 0
         self._session_replaced = 0
@@ -89,12 +107,13 @@ class AppUI:
         found = await self.logic.advance_to_next_valid_card()
         if not found:
             notify("All cards processed!", type='positive')
-            if self.status_label:
-                self.status_label.set_text(
-                    f"0 Remaining | {self._session_skipped} Skipped | "
-                    f"{self._session_replaced} Replaced — All done!"
-                )
-            if self.main_container: self.main_container.clear()
+            self._set_status_done()
+            if self.provider_slot:
+                self.provider_slot.clear()
+            if self.search_bar_slot:
+                self.search_bar_slot.clear()
+            if self.main_container:
+                self.main_container.clear()
             return
             
         # Reset pagination/images for new card
@@ -317,15 +336,45 @@ class AppUI:
                     ui.button("Save", on_click=save_settings).classes('bg-blue-600')
         return settings_dialog
 
+    def _set_status_idle(self):
+        if self.status_label_idle:
+            self.status_label_idle.visible = True
+        if self.status_stats_row:
+            self.status_stats_row.visible = False
+
+    def _set_status_processing(self, remaining, skipped, replaced):
+        if self.status_label_idle:
+            self.status_label_idle.visible = False
+        if self.status_stats_row:
+            self.status_stats_row.visible = True
+        if self.status_remaining:
+            self.status_remaining.set_text(f"{remaining} Remaining")
+        if self.status_skipped:
+            self.status_skipped.set_text(f"{skipped} Skipped")
+        if self.status_replaced:
+            self.status_replaced.set_text(f"{replaced} Replaced")
+
+    def _set_status_done(self):
+        if self.status_label_idle:
+            self.status_label_idle.visible = False
+        if self.status_stats_row:
+            self.status_stats_row.visible = True
+        if self.status_remaining:
+            self.status_remaining.set_text("0 Remaining")
+        if self.status_skipped:
+            self.status_skipped.set_text(f"{self._session_skipped} Skipped")
+        if self.status_replaced:
+            self.status_replaced.set_text(f"{self._session_replaced} Replaced")
+
     def _update_status_bar(self):
-        if not self.status_label:
+        if not self.status_remaining:
             return
         if not self.logic.valid_notes:
-            self.status_label.set_text("Ready to start...")
+            self._set_status_idle()
             return
         remaining = self.logic.get_remaining_count()
-        self.status_label.set_text(
-            f"{remaining} Remaining | {self._session_skipped} Skipped | {self._session_replaced} Replaced"
+        self._set_status_processing(
+            remaining, self._session_skipped, self._session_replaced
         )
 
     @staticmethod
@@ -338,30 +387,38 @@ class AppUI:
     def refresh_ui_content(self):
         self._update_status_bar()
 
+        if self.provider_slot:
+            self.provider_slot.clear()
+            with self.provider_slot:
+                self.build_provider_toggles()
+        if self.search_bar_slot:
+            self.search_bar_slot.clear()
+            with self.search_bar_slot:
+                self.build_search_bar()
         if self.main_container:
             self.main_container.clear()
             with self.main_container:
-                self.build_provider_toggles()
-                
-                with ui.row().classes('w-full gap-4'):
-                    self.build_left_panel()
-                    self.build_right_panel()
+                # Full width: 4 equal columns — info | image | image | image
+                with ui.element('div').classes(
+                    'grid grid-cols-1 lg:grid-cols-4 gap-4 lg:gap-6 w-full items-start'
+                ):
+                    with ui.column().classes('min-w-0'):
+                        self.build_left_panel()
+                    with ui.column().classes('lg:col-span-3 min-w-0'):
+                        self.build_results_panel()
 
     def build_provider_toggles(self):
-        with ui.row().classes('w-full justify-center mb-4 gap-2'):
-            ui.label("Provider:").classes('py-2 font-bold text-gray-600')
-            
-            def render_provider_btn(provider_name):
-                is_active = self.current_provider == provider_name
-                btn_props = 'color=blue-6 text-color=white unelevated' if is_active else 'color=white text-color=grey-9 outline'
-                ui.button(provider_name.capitalize(), on_click=lambda p=provider_name: self.set_provider(p)) \
-                    .props(btn_props).classes('px-4 font-bold')
+        def render_provider_btn(provider_name):
+            is_active = self.current_provider == provider_name
+            btn_props = 'color=blue-6 text-color=white unelevated' if is_active else 'color=white text-color=grey-9 outline'
+            ui.button(provider_name.capitalize(), on_click=lambda p=provider_name: self.set_provider(p)) \
+                .props(btn_props).classes('px-3 sm:px-4 font-bold text-sm')
 
-            render_provider_btn('pexels')
-            render_provider_btn('unsplash')
-            render_provider_btn('freepik')
-            render_provider_btn('pixabay')
-            render_provider_btn('wikimedia')
+        render_provider_btn('pexels')
+        render_provider_btn('unsplash')
+        render_provider_btn('freepik')
+        render_provider_btn('pixabay')
+        render_provider_btn('wikimedia')
 
     def _left_panel_heading(self, title: str):
         ui.label(title).classes(
@@ -370,8 +427,7 @@ class AppUI:
 
     def _left_panel_large_html(self, raw: str):
         ui.html(raw, sanitize=False).classes(
-            'text-xl sm:text-2xl leading-snug text-purple-900 font-medium break-words '
-            'text-center w-full'
+            'text-2xl sm:text-3xl leading-snug text-black font-medium break-words text-left w-full'
         )
 
     def _left_panel_large_plain(self, text: str):
@@ -387,10 +443,40 @@ class AppUI:
             'text-sm text-slate-700 leading-relaxed break-words whitespace-pre-wrap'
         )
 
+    def build_search_bar(self):
+        """
+        Search centered (equal flex-1 spacers); Skip right-aligned in the last third.
+        Same flex pattern as the header — avoids Tailwind arbitrary grid templates.
+        """
+
+        def on_search_change(e):
+            self.logic.current_term = e.value
+            self.current_page = 1
+            self.loaded_images = []
+            self.refresh_results()
+
+        with ui.element('div').classes(
+            'w-full flex flex-col sm:flex-row sm:items-center gap-y-2 sm:gap-y-0 '
+            'gap-x-3 mb-1 sm:mb-1.5'
+        ):
+            ui.element('div').classes('sm:block flex-1 min-w-0')
+            with ui.element('div').classes(
+                'w-full sm:w-auto sm:flex-none sm:min-w-0 flex justify-center'
+            ):
+                ui.input(label="Search Query", value=self.logic.current_term) \
+                    .on('keydown.enter', lambda e: on_search_change(e.sender)) \
+                    .props('outlined dense').classes(
+                        'w-full min-w-0 max-w-xl sm:w-96 md:max-w-2xl'
+                    )
+            with ui.element('div').classes(
+                'w-full sm:flex-1 min-w-0 flex justify-end items-center'
+            ):
+                ui.button("Skip Card", on_click=self.skip_card) \
+                    .props('color=grey-5 flat icon=skip_next').classes('font-bold shrink-0')
+
     def build_left_panel(self):
         with ui.card().classes(
-            'w-[min(100%,28rem)] min-w-[220px] max-w-md flex-shrink-0 p-4 bg-slate-50 '
-            'border border-slate-200/90 rounded-xl shadow-sm'
+            'w-full min-w-0 p-4 bg-slate-50 border border-slate-200/90 rounded-xl shadow-sm'
         ):
             with ui.column().classes('w-full gap-4'):
                 note = self.logic.current_note
@@ -440,24 +526,10 @@ class AppUI:
                     self._left_panel_heading(label)
                     self._left_panel_body(raw)
 
-    def build_right_panel(self):
-        with ui.column().classes('flex-1'):
-            with ui.row().classes('w-full justify-between items-center mb-2'):
-                def on_search_change(e):
-                    self.logic.current_term = e.value
-                    self.current_page = 1
-                    self.loaded_images = []
-                    self.refresh_results()
-
-                ui.input(label="Search Query", value=self.logic.current_term) \
-                    .on('keydown.enter', lambda e: on_search_change(e.sender)) \
-                    .props('outlined dense').classes('w-2/3')
-                
-                ui.button("Skip Card", on_click=self.skip_card) \
-                    .props('color=grey-5 flat icon=skip_next').classes('font-bold')
-
-            self.results_area = ui.column().classes('w-full')
-            self.refresh_results()
+    def build_results_panel(self):
+        """Right side of the 4-column layout: 3 equal image columns + load more."""
+        self.results_area = ui.column().classes('w-full')
+        self.refresh_results()
 
     def refresh_results(self, append=False):
         if not self.results_area: return
@@ -530,12 +602,14 @@ class AppUI:
                                 self.results_area.clear()
                                 self._result_columns = None
                                 with self.results_area:
-                                    # Three stacks; greedy balance using thumb aspect ratios (th/tw).
+                                    # Three equal-width stacks (1/3 of the 3-column span = 1/4 page each).
                                     cols_ix = self._balanced_column_indices(self.loaded_images)
-                                    with ui.row().classes('w-full gap-4 items-start'):
+                                    with ui.element('div').classes(
+                                        'grid grid-cols-1 sm:grid-cols-3 gap-4 w-full items-start'
+                                    ):
                                         self._result_columns = []
                                         for _ in range(3):
-                                            with ui.column().classes('flex-1 min-w-0 gap-4') as c:
+                                            with ui.column().classes('min-w-0 gap-4') as c:
                                                 self._result_columns.append(c)
                                         for img, c in zip(self.loaded_images, cols_ix):
                                             with self._result_columns[c]:
@@ -543,7 +617,9 @@ class AppUI:
                                     self._load_more_btn = ui.button(
                                         "Load More Results",
                                         on_click=self.load_more_images,
-                                    ).classes('w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300')
+                                    ).classes(
+                                        'w-full mt-4 bg-gray-200 text-gray-800 hover:bg-gray-300'
+                                    )
 
                         except asyncio.CancelledError:
                             pass  # Prefetch was cancelled (e.g. provider switched) — silently stop
@@ -599,17 +675,59 @@ async def index_page():
 
     app_ui = AppUI(logic, searcher, args)
 
-    with ui.column().classes('w-full max-w-6xl mx-auto p-4'):
-        with ui.row().classes('w-full justify-between items-center mb-4'):
-            ui.label("Anki Image Updater").classes('text-2xl font-bold')
-            app_ui.status_label = ui.label("Ready to start...").classes(
-                'text-base sm:text-lg text-slate-700 font-medium tabular-nums'
-            )
-        
-        app_ui.main_container = ui.column().classes('w-full min-h-[500px] border border-gray-200 rounded-lg p-4 bg-white shadow-sm')
+    with ui.column().classes('w-full max-w-[100vw] box-border px-4 sm:px-6 lg:px-8 py-2 sm:py-3'):
+        # Row 1: title (left) | providers (center) | stats (right)
+        # Use flex + flex-1 thirds (no arbitrary grid-* — NiceGUI’s Tailwind may omit them).
+        with ui.element('div').classes(
+            'w-full flex flex-col sm:flex-row sm:items-center gap-y-2 sm:gap-y-0 '
+            'gap-x-2 sm:gap-x-4 mb-1.5 sm:mb-2'
+        ):
+            with ui.element('div').classes(
+                'w-full sm:flex-1 sm:min-w-0 flex justify-start items-center'
+            ):
+                ui.label("Anki Image Updater").classes(
+                    'text-xl sm:text-2xl font-bold text-slate-800 shrink-0 min-w-0'
+                )
+            with ui.element('div').classes(
+                'w-full sm:flex-1 sm:min-w-0 flex justify-center items-center'
+            ):
+                app_ui.provider_slot = ui.row().classes(
+                    'w-full min-w-0 flex flex-row flex-wrap sm:flex-nowrap '
+                    'items-center justify-center gap-1.5 sm:gap-2'
+                )
+            with ui.element('div').classes(
+                'w-full sm:flex-1 sm:min-w-0 flex justify-end items-center gap-2'
+            ):
+                app_ui.status_label_idle = ui.label("Ready to start...").classes(
+                    'text-sm sm:text-base text-slate-500 font-medium text-right'
+                )
+                with ui.row().classes(
+                    'items-center gap-1.5 sm:gap-2 flex-wrap justify-end'
+                ) as stats_row:
+                    app_ui.status_stats_row = stats_row
+                    app_ui.status_stats_row.visible = False
+                    app_ui.status_remaining = ui.label("").classes(
+                        'text-sm sm:text-base font-semibold tabular-nums '
+                        'text-[#4f8fd4]'
+                    )
+                    ui.label("·").classes('text-slate-300 select-none')
+                    app_ui.status_skipped = ui.label("").classes(
+                        'text-sm sm:text-base font-semibold tabular-nums '
+                        'text-[#d4a84b]'
+                    )
+                    ui.label("·").classes('text-slate-300 select-none')
+                    app_ui.status_replaced = ui.label("").classes(
+                        'text-sm sm:text-base font-semibold tabular-nums '
+                        'text-[#4faa8a]'
+                    )
+
+        app_ui.search_bar_slot = ui.column().classes('w-full')
+        app_ui.main_container = ui.column().classes(
+            'w-full min-h-[500px] bg-white'
+        )
         settings_dialog = app_ui.build_settings_dialog()
 
-        with ui.row().classes('absolute top-4 right-4'):
+        with ui.row().classes('absolute top-2 right-3 sm:top-3 sm:right-4'):
              ui.button(icon='settings', on_click=settings_dialog.open).props('flat round color=grey-7')
 
         if args.deck:

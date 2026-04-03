@@ -5,6 +5,12 @@ import urllib.parse
 
 logger = logging.getLogger(__name__)
 
+# Grid: ~3–4 columns; each cell is only a few hundred CSS pixels wide — fetch light thumbs
+# (~400px long edge) so we are not loading 1600px images per cell. Retina-friendly without waste.
+GRID_THUMB_MAX_DIM = 420
+# Saved card image: “large” quality (~1920px long edge) where the API supports it.
+SAVE_MAX_DIM = 1920
+
 
 def _thumb_dims(width, height):
     """Return dict with thumb_width/thumb_height if both are positive ints, else {}."""
@@ -30,6 +36,36 @@ def _parse_freepik_source_size(image_obj):
     if not m:
         return None, None
     return int(m.group(1)), int(m.group(2))
+
+
+def _preview_dims_from_original(orig_w, orig_h, max_dim=GRID_THUMB_MAX_DIM):
+    """Dimensions for layout when the preview is scaled to max long edge max_dim."""
+    try:
+        ow, oh = int(orig_w), int(orig_h)
+    except (TypeError, ValueError):
+        return {}
+    if ow <= 0 or oh <= 0:
+        return {}
+    long_edge = max(ow, oh)
+    if long_edge <= max_dim:
+        return _thumb_dims(ow, oh)
+    scale = max_dim / long_edge
+    return _thumb_dims(int(round(ow * scale)), int(round(oh * scale)))
+
+
+def _unsplash_raw_width(raw_url: str, width: int) -> str:
+    """Resize Unsplash hotlinked `raw` URL to a max width (long edge for landscape)."""
+    sep = "&" if "?" in raw_url else "?"
+    return f"{raw_url}{sep}w={width}&fit=max&q=80"
+
+
+def _pixabay_grid_thumb_url(webformat_url: str) -> str:
+    """Prefer ~340px webformat variant for grid (Pixabay allows swapping _640 → _340 in path)."""
+    if not webformat_url:
+        return ""
+    # e.g. ..._640.jpg → ..._340.jpg (see Pixabay API docs for webformatURL)
+    return webformat_url.replace("_640.", "_340.").replace("_960.", "_340.")
+
 
 class ImageSearcher:
     """Handles communicating with external image APIs asynchronously."""
@@ -82,12 +118,16 @@ class ImageSearcher:
         results = []
         if data.get('photos'):
             for photo in data['photos']:
+                src = photo.get('src') or {}
+                # Grid: medium (~350px tall) — not large2x. Save: large2x / large / original.
+                thumb_url = src.get('medium') or src.get('small') or src.get('large')
+                full_url = src.get('large2x') or src.get('large') or src.get('original')
                 results.append({
-                    'thumb': photo['src']['medium'],
-                    'full': photo['src']['original'],
+                    'thumb': thumb_url,
+                    'full': full_url,
                     'context_url': photo['url'],
                     'provider': 'Pexels',
-                    **_thumb_dims(photo.get('width'), photo.get('height')),
+                    **_preview_dims_from_original(photo.get('width'), photo.get('height')),
                 })
         return results
 
@@ -104,12 +144,13 @@ class ImageSearcher:
         results = []
         if data.get('results'):
             for photo in data['results']:
+                raw = photo['urls']['raw']
                 results.append({
-                    'thumb': photo['urls']['small'],
-                    'full': photo['urls']['raw'],
+                    'thumb': _unsplash_raw_width(raw, GRID_THUMB_MAX_DIM),
+                    'full': _unsplash_raw_width(raw, SAVE_MAX_DIM),
                     'context_url': photo['links']['html'],
                     'provider': 'Unsplash',
-                    **_thumb_dims(photo.get('width'), photo.get('height')),
+                    **_preview_dims_from_original(photo.get('width'), photo.get('height')),
                 })
         return results
 
@@ -149,12 +190,13 @@ class ImageSearcher:
                         continue
                 if 'image' in item and 'source' in item['image']:
                     fw, fh = _parse_freepik_source_size(item['image'])
+                    url = item['image']['source']['url']
                     results.append({
-                        'thumb': item['image']['source']['url'],
-                        'full': item['image']['source']['url'],
+                        'thumb': url,
+                        'full': url,
                         'context_url': item.get('url', '#'),
                         'provider': 'Freepik',
-                        **_thumb_dims(fw, fh),
+                        **_preview_dims_from_original(fw, fh, max_dim=GRID_THUMB_MAX_DIM),
                     })
         return results
 
@@ -177,14 +219,18 @@ class ImageSearcher:
         data = await self.make_search_request(url, headers={})
         results = []
         for hit in data.get("hits", [])[:count]:
-            thumb = hit.get("previewURL") or hit.get("webformatURL", "")
-            full = hit.get("largeImageURL") or hit.get("webformatURL") or hit.get("fullHDURL", "")
+            wf = hit.get("webformatURL", "")
+            # Grid: ~340px webformat variant; save: full HD / large when available.
+            thumb = _pixabay_grid_thumb_url(wf) or wf or hit.get("previewURL", "")
+            full = hit.get("fullHDURL") or hit.get("largeImageURL") or wf or ""
             results.append({
                 "thumb": thumb,
                 "full": full,
                 "context_url": hit.get("pageURL", ""),
                 "provider": "Pixabay",
-                **_thumb_dims(hit.get("previewWidth"), hit.get("previewHeight")),
+                **_preview_dims_from_original(
+                    hit.get("imageWidth"), hit.get("imageHeight"), max_dim=GRID_THUMB_MAX_DIM
+                ),
             })
         return results
 
@@ -204,7 +250,8 @@ class ImageSearcher:
             'gsroffset': str(offset),
             'prop': 'imageinfo',
             'iiprop': 'url|mime',
-            'iiurlwidth': '300',   # Generates thumburl at this width
+            # Grid-sized thumb only; `full` uses original `url` (see below).
+            'iiurlwidth': str(GRID_THUMB_MAX_DIM),
             'format': 'json',
             'origin': '*',
         }
@@ -239,9 +286,11 @@ class ImageSearcher:
             context_url = "https://commons.wikimedia.org/wiki/" + urllib.parse.quote(title.replace(' ', '_'))
             tw = info.get('thumbwidth') or info.get('width')
             th = info.get('thumbheight') or info.get('height')
+            thumb_url = info.get('thumburl') or info.get('url', '')
+            full_url = info.get('url') or thumb_url
             results.append({
-                'thumb': info.get('thumburl', info.get('url', '')),
-                'full': info.get('url', ''),
+                'thumb': thumb_url,
+                'full': full_url,
                 'context_url': context_url,
                 'provider': 'Wikimedia',
                 **_thumb_dims(tw, th),
