@@ -7,6 +7,24 @@ from utils import download_image_as_base64
 
 logger = logging.getLogger(__name__)
 
+
+def _sanitize_filename_stem(text: str, max_len: int = 48) -> str:
+    """
+    Lowercase slug for a filesystem component: letters/digits (any script) and underscores.
+    """
+    s = (text or "").strip().lower()
+    s = re.sub(r"[^\w]", "_", s, flags=re.UNICODE)
+    s = re.sub(r"_+", "_", s).strip("_")
+    if not s:
+        return "image"
+    return s[:max_len]
+
+
+def _filename_provider_slug(provider_display: str) -> str:
+    """Stable lowercase slug for img_data['provider'] (e.g. Pexels -> pexels)."""
+    return re.sub(r"\s+", "_", (provider_display or "unknown").strip().lower())
+
+
 class ActionError(Exception):
     """Exception raised for known logic errors that the user should see."""
     pass
@@ -119,9 +137,16 @@ class CardManagerLogic:
         """
         Downloads the full-res image from the provider, pushes to Anki,
         updates fields, and adds tags.
-        
+
+        Media filename: ``{stem}_{provider}_{unix_timestamp}.jpg`` where *stem* comes from
+        the note's configured search field (``field_term``), not the live search-box text.
+        The trailing number is Unix time in seconds so re-saves get unique names.
+
         `note` and `term` can be passed explicitly to avoid race conditions
         when the logic state has already advanced to the next card.
+
+        Returns the card's search-field text (plain) for logging and notifications,
+        or the passed ``term`` if that field is empty.
         """
         # Use explicitly passed values — never rely on self.current_note here,
         # because by the time a background task runs, it may have changed.
@@ -138,9 +163,15 @@ class CardManagerLogic:
         if not image_b64:
             raise ActionError("Failed to download image from the provider.")
 
-        safe_term = re.sub(r'[^a-zA-Z0-9]', '', term)[:20]
+        # Filename uses the card's configured search field from the note (e.g. English),
+        # not the live search box text — so editing the query does not change the stem.
+        raw_from_note = note['fields'].get(self.field_term, {}).get('value', '')
+        stem_from_card = raw_from_note.split('<')[0].strip()
+        stem = _sanitize_filename_stem(stem_from_card)
+        provider_slug = _filename_provider_slug(provider)
+        # Unix time (seconds) — keeps names unique when re-saving the same card.
         timestamp = int(time.time())
-        filename = f"{provider}_{safe_term}_{timestamp}.jpg"
+        filename = f"{stem}_{provider_slug}_{timestamp}.jpg"
 
         res = await self.anki.store_media_file(filename, image_b64)
         if res is None:
@@ -159,7 +190,10 @@ class CardManagerLogic:
         tags_to_add = [f"{self.tag_auto_replaced}::{provider}"]
         await self.anki.add_tags([note['noteId']], " ".join(tags_to_add))
 
-        return term
+        # Logs / UI: use the card's search-field text, not the edited search-box query.
+        if stem_from_card:
+            return stem_from_card
+        return term or ""
 
     def get_remaining_count(self):
         """Returns the number of cards left to process."""

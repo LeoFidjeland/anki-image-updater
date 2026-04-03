@@ -2,6 +2,13 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 import core
 
+
+def test_sanitize_filename_stem_and_provider_slug():
+    assert core._sanitize_filename_stem("Amount") == "amount"
+    assert core._sanitize_filename_stem("Thanks (Very colloquial)") == "thanks_very_colloquial"
+    assert core._filename_provider_slug("Pexels") == "pexels"
+    assert core._filename_provider_slug("Wikimedia") == "wikimedia"
+
 @pytest.fixture
 def mock_anki_client():
     mock = AsyncMock()
@@ -55,8 +62,14 @@ async def test_card_manager_skip_card(card_logic_manager):
 @pytest.mark.asyncio
 async def test_card_manager_apply_image_to_card(card_logic_manager, monkeypatch):
     """Test that applying an image updates the card correctly."""
-    card_logic_manager.current_note = {"noteId": 555}
-    card_logic_manager.current_term = "Dog"
+    note = {
+        "noteId": 555,
+        "fields": {
+            "English": {"value": "Dog"},
+        },
+    }
+    card_logic_manager.current_note = note
+    card_logic_manager.current_term = "edited search query"
     card_logic_manager.note_ids = [555]
     card_logic_manager.current_index = 0
     
@@ -69,13 +82,15 @@ async def test_card_manager_apply_image_to_card(card_logic_manager, monkeypatch)
     monkeypatch.setattr("core.download_image_as_base64", AsyncMock(return_value="fake_base64_data"))
     monkeypatch.setattr(core.time, 'time', lambda: 1234567890)
     
-    card_logic_manager.anki.store_media_file = AsyncMock(return_value="Pexels_Dog_1234567890.jpg")
+    card_logic_manager.anki.store_media_file = AsyncMock(return_value="dog_pexels_1234567890.jpg")
     card_logic_manager.anki.update_note_fields = AsyncMock(return_value=None)
     card_logic_manager.anki.add_tags = AsyncMock(return_value=None)
     
-    await card_logic_manager.apply_image_to_card(img_data)
-    
-    expected_filename = "Pexels_Dog_1234567890.jpg"
+    # Filename stem and return value come from note field "English", not the edited search box.
+    ret = await card_logic_manager.apply_image_to_card(img_data)
+    assert ret == "Dog"
+
+    expected_filename = "dog_pexels_1234567890.jpg"
     card_logic_manager.anki.store_media_file.assert_awaited_once_with(expected_filename, "fake_base64_data")
     card_logic_manager.anki.update_note_fields.assert_awaited_once()
     card_logic_manager.anki.add_tags.assert_awaited_once()

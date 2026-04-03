@@ -25,6 +25,25 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+
+class _SuppressAnkiConnectHttpInfo(logging.Filter):
+    """Drop httpx/httpcore INFO spam for successful AnkiConnect (localhost:8765) calls."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno != logging.INFO:
+            return True
+        msg = record.getMessage()
+        if "8765" not in msg:
+            return True
+        if "localhost" in msg or "127.0.0.1" in msg:
+            return False
+        return True
+
+
+for _name in ("httpx", "httpcore"):
+    logging.getLogger(_name).addFilter(_SuppressAnkiConnectHttpInfo())
+
 logger = logging.getLogger(__name__)
 
 def notify(msg, type='info'):
@@ -242,13 +261,22 @@ class AppUI:
         # has already moved on — this prevents updating the wrong card.
         snapshot_note = self.logic.current_note
         snapshot_term = self.logic.current_term
+        raw_card = (
+            (snapshot_note or {})
+            .get('fields', {})
+            .get(self.logic.field_term, {})
+            .get('value', '')
+        )
+        snapshot_card_term = raw_card.split('<')[0].strip() or snapshot_term
 
         # Immediately clear the results grid so stale image cards
         # can't receive further clicks while next_card() is awaiting Anki.
         if self.results_area:
             self.results_area.clear()
             with self.results_area:
-                ui.label(f"Saving '{snapshot_term}'...").classes('text-blue-500 animate-pulse py-4')
+                ui.label(f"Saving '{snapshot_card_term}'...").classes(
+                    'text-blue-500 animate-pulse py-4'
+                )
 
         async def _background_update():
             with current_client:  # Restore NiceGUI slot context for UI calls
