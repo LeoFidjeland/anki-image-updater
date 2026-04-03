@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from search_providers import (
@@ -211,3 +213,58 @@ def test_unsplash_raw_width_appends_params():
 def test_pixabay_grid_thumb_url_replaces_640():
     u = "https://cdn.example.com/a_640.jpg"
     assert "_340." in _pixabay_grid_thumb_url(u)
+
+
+@pytest.mark.asyncio
+async def test_search_cache_reuses_results(mock_config, mock_httpx):
+    """search() hits the in-memory cache; clear_search_cache forces a new HTTP call."""
+    mock_config.set("PEXELS_API_KEY", "fake_key")
+    mock_client, mock_response = mock_httpx
+    mock_response.json.return_value = {
+        "photos": [
+            {
+                "src": {"medium": "thumb_u", "large2x": "full_u"},
+                "url": "ctx",
+                "width": 1200,
+                "height": 800,
+            }
+        ]
+    }
+    searcher = ImageSearcher(mock_config)
+    r1 = await searcher.search("pexels", "dog", count=6, page=1)
+    r2 = await searcher.search("pexels", "dog", count=6, page=1)
+    assert mock_client.get.call_count == 1
+    assert r1 == r2
+
+    await searcher.search("pexels", "  Dog  ", count=6, page=1)
+    assert mock_client.get.call_count == 1
+
+    await searcher.search("pexels", "dog", count=6, page=2)
+    assert mock_client.get.call_count == 2
+
+    searcher.clear_search_cache()
+    await searcher.search("pexels", "dog", count=6, page=1)
+    assert mock_client.get.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_search_inflight_dedupes_concurrent_calls(mock_config, mock_httpx):
+    """Two overlapping search() calls for the same key share one HTTP request."""
+    mock_config.set("PEXELS_API_KEY", "fake_key")
+    mock_client, mock_response = mock_httpx
+    mock_response.json.return_value = {
+        "photos": [
+            {
+                "src": {"medium": "u", "large2x": "f"},
+                "url": "ctx",
+                "width": 1200,
+                "height": 800,
+            }
+        ]
+    }
+    searcher = ImageSearcher(mock_config)
+    await asyncio.gather(
+        searcher.search("pexels", "overlap", count=6, page=1),
+        searcher.search("pexels", "overlap", count=6, page=1),
+    )
+    assert mock_client.get.call_count == 1

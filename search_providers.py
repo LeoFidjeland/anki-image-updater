@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 import re
@@ -69,9 +70,28 @@ def _pixabay_grid_thumb_url(webformat_url: str) -> str:
 
 class ImageSearcher:
     """Handles communicating with external image APIs asynchronously."""
-    
+
     def __init__(self, config_manager):
         self.config = config_manager
+        # In-memory search results: key (provider, query, count, page) -> list[dict]
+        # Cleared when a new Anki card loads or a new deck scan starts (see AppUI).
+        self._search_cache: dict[tuple, list] = {}
+        # One in-flight task per key so concurrent callers share a single HTTP round-trip.
+        self._inflight: dict[tuple, asyncio.Task] = {}
+        self._search_lock = asyncio.Lock()
+
+    def clear_search_cache(self) -> None:
+        """Drop cached search results (new card or new deck load)."""
+        self._search_cache.clear()
+        for t in list(self._inflight.values()):
+            if not t.done():
+                t.cancel()
+        self._inflight.clear()
+
+    @staticmethod
+    def _search_cache_key(provider: str, query: str, count: int, page: int) -> tuple:
+        q = (query or "").strip().lower()
+        return (provider, q, int(count), int(page))
 
     def parse_api_error(self, response):
         """Centralized helper for API requests that raises explicit auth errors."""
@@ -92,6 +112,40 @@ class ImageSearcher:
             return self.parse_api_error(r)
 
     async def search(self, provider, query, count=1, page=1):
+        """Dispatch to provider search with cache + in-flight deduplication."""
+        key = self._search_cache_key(provider, query, count, page)
+        if key in self._search_cache:
+            return [dict(item) for item in self._search_cache[key]]
+
+        async with self._search_lock:
+            if key in self._search_cache:
+                return [dict(item) for item in self._search_cache[key]]
+            if key not in self._inflight:
+                self._inflight[key] = asyncio.create_task(
+                    self._search_uncached(provider, query, count, page)
+                )
+            task = self._inflight[key]
+
+        try:
+            results = await task
+        except asyncio.CancelledError:
+            async with self._search_lock:
+                self._inflight.pop(key, None)
+            raise
+        except BaseException:
+            async with self._search_lock:
+                self._inflight.pop(key, None)
+            raise
+
+        async with self._search_lock:
+            if self._inflight.get(key) is task:
+                self._inflight.pop(key, None)
+            if key not in self._search_cache:
+                self._search_cache[key] = [dict(item) for item in results]
+
+        return [dict(item) for item in results]
+
+    async def _search_uncached(self, provider, query, count=1, page=1):
         if provider == 'pexels':
             return await self.search_pexels(query, count, page)
         elif provider == 'unsplash':

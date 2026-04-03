@@ -70,6 +70,7 @@ class AppUI:
         await self.load_cards()
 
     async def load_cards(self):
+        self.searcher.clear_search_cache()
         # Show loading state immediately (synchronous, before any await)
         # so the user gets instant feedback instead of a frozen UI.
         if self.provider_slot:
@@ -115,7 +116,8 @@ class AppUI:
             if self.main_container:
                 self.main_container.clear()
             return
-            
+
+        self.searcher.clear_search_cache()
         # Reset pagination/images for new card
         self.current_page = 1
         self.loaded_images = []
@@ -150,6 +152,7 @@ class AppUI:
         if self._prefetch_task and not self._prefetch_task.done():
             self._prefetch_task.cancel()
         self._prefetch_task = None
+        self._fetch_generation += 1
         self.refresh_ui_content()
 
     def load_more_images(self):
@@ -453,6 +456,10 @@ class AppUI:
             self.logic.current_term = e.value
             self.current_page = 1
             self.loaded_images = []
+            if self._prefetch_task and not self._prefetch_task.done():
+                self._prefetch_task.cancel()
+            self._prefetch_task = None
+            self._fetch_generation += 1
             self.refresh_results()
 
         with ui.element('div').classes(
@@ -535,13 +542,13 @@ class AppUI:
         if not self.results_area: return
         
         # Snapshot all the params that define this particular search.
-        # Increment generation so any currently-running fetch_and_show knows it's stale.
+        # Generation is bumped by next_card, set_provider, or search field edit — not here —
+        # so prefetch and fetch_and_show share the same generation (single API call).
         if not append:
             self.loaded_images = []
             self.results_area.clear()
             self._result_columns = None
             self._load_more_btn = None
-            self._fetch_generation += 1
 
         my_generation = self._fetch_generation
         provider = self.current_provider
