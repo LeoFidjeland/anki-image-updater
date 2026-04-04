@@ -1,31 +1,67 @@
 import asyncio
 import httpx
 import logging
-import re
 import urllib.parse
+from collections import defaultdict
+
+from image_sizing import (
+    GRID_THUMB_MAX_DIM,
+    SAVE_MAX_DIM,
+    preview_dims_from_original,
+    pexels_thumb_full_urls,
+    pixabay_thumb_full_urls,
+    thumb_dims,
+    unsplash_thumb_full_urls,
+    wikimedia_grid_preview_url,
+    wikimedia_save_iiurlwidth,
+    wikimedia_shrink_existing_thumb_url,
+)
 
 logger = logging.getLogger(__name__)
 
-# Grid: ~3–4 columns; each cell is only a few hundred CSS pixels wide — fetch light thumbs
-# (~400px long edge) so we are not loading 1600px images per cell. Retina-friendly without waste.
-GRID_THUMB_MAX_DIM = 420
-# Saved card image: “large” quality (~1920px long edge) where the API supports it.
-SAVE_MAX_DIM = 1920
+# Re-export for callers/tests that import constants from this module.
+__all__ = ["ImageSearcher", "GRID_THUMB_MAX_DIM", "SAVE_MAX_DIM"]
+
+_COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 
 
-def _thumb_dims(width, height):
-    """Return dict with thumb_width/thumb_height if both are positive ints, else {}."""
-    try:
-        w, h = int(width), int(height)
-    except (TypeError, ValueError):
-        return {}
-    if w > 0 and h > 0:
-        return {"thumb_width": w, "thumb_height": h}
-    return {}
+async def _wikimedia_imageinfo_by_title(
+    client: httpx.AsyncClient,
+    headers: dict,
+    titles: list[str],
+    iiurlwidth: int,
+) -> dict[str, dict]:
+    """Map page title -> ``imageinfo[0]`` (``thumburl`` / ``url``) for a fixed ``iiurlwidth``."""
+    out: dict[str, dict] = {}
+    for i in range(0, len(titles), 50):
+        chunk = titles[i : i + 50]
+        params = {
+            "action": "query",
+            "titles": "|".join(chunk),
+            "prop": "imageinfo",
+            "iiprop": "url",
+            "iiurlwidth": str(iiurlwidth),
+            "format": "json",
+            "origin": "*",
+        }
+        api_url = _COMMONS_API + "?" + urllib.parse.urlencode(params)
+        r = await client.get(api_url, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        for p in data.get("query", {}).get("pages", {}).values():
+            if p.get("missing"):
+                continue
+            tit = p.get("title")
+            ii = p.get("imageinfo") or []
+            if tit and ii:
+                out[tit] = ii[0]
+    return out
 
 
 def _parse_freepik_source_size(image_obj):
     """Parse image.source.size like '740x640' or '740×640' into (w, h)."""
+    import re
+
     if not isinstance(image_obj, dict):
         return None, None
     src = image_obj.get("source") or {}
@@ -39,44 +75,12 @@ def _parse_freepik_source_size(image_obj):
     return int(m.group(1)), int(m.group(2))
 
 
-def _preview_dims_from_original(orig_w, orig_h, max_dim=GRID_THUMB_MAX_DIM):
-    """Dimensions for layout when the preview is scaled to max long edge max_dim."""
-    try:
-        ow, oh = int(orig_w), int(orig_h)
-    except (TypeError, ValueError):
-        return {}
-    if ow <= 0 or oh <= 0:
-        return {}
-    long_edge = max(ow, oh)
-    if long_edge <= max_dim:
-        return _thumb_dims(ow, oh)
-    scale = max_dim / long_edge
-    return _thumb_dims(int(round(ow * scale)), int(round(oh * scale)))
-
-
-def _unsplash_raw_width(raw_url: str, width: int) -> str:
-    """Resize Unsplash hotlinked `raw` URL to a max width (long edge for landscape)."""
-    sep = "&" if "?" in raw_url else "?"
-    return f"{raw_url}{sep}w={width}&fit=max&q=80"
-
-
-def _pixabay_grid_thumb_url(webformat_url: str) -> str:
-    """Prefer ~340px webformat variant for grid (Pixabay allows swapping _640 → _340 in path)."""
-    if not webformat_url:
-        return ""
-    # e.g. ..._640.jpg → ..._340.jpg (see Pixabay API docs for webformatURL)
-    return webformat_url.replace("_640.", "_340.").replace("_960.", "_340.")
-
-
 class ImageSearcher:
     """Handles communicating with external image APIs asynchronously."""
 
     def __init__(self, config_manager):
         self.config = config_manager
-        # In-memory search results: key (provider, query, count, page) -> list[dict]
-        # Cleared when a new Anki card loads or a new deck scan starts (see AppUI).
         self._search_cache: dict[tuple, list] = {}
-        # One in-flight task per key so concurrent callers share a single HTTP round-trip.
         self._inflight: dict[tuple, asyncio.Task] = {}
         self._search_lock = asyncio.Lock()
 
@@ -99,7 +103,9 @@ class ImageSearcher:
             if response.status_code == 401:
                 raise ValueError("API key is invalid or unauthorized. Please check your settings.")
             if response.status_code == 403:
-                raise Exception(f"Request rejected (403) — you may be temporarily rate-limited. Try again in a moment or switch provider.")
+                raise Exception(
+                    f"Request rejected (403) — you may be temporarily rate-limited. Try again in a moment or switch provider."
+                )
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
@@ -146,43 +152,43 @@ class ImageSearcher:
         return [dict(item) for item in results]
 
     async def _search_uncached(self, provider, query, count=1, page=1):
-        if provider == 'pexels':
+        if provider == "pexels":
             return await self.search_pexels(query, count, page)
-        elif provider == 'unsplash':
+        if provider == "unsplash":
             return await self.search_unsplash(query, count, page)
-        elif provider == 'freepik':
+        if provider == "freepik":
             return await self.search_freepik(query, count, page)
-        elif provider == 'pixabay':
+        if provider == "pixabay":
             return await self.search_pixabay(query, count, page)
-        elif provider == 'wikimedia':
+        if provider == "wikimedia":
             return await self.search_wikimedia(query, count, page)
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
+        raise ValueError(f"Unknown provider: {provider}")
 
     async def search_pexels(self, query, count=1, page=1):
         """Searches Pexels."""
         api_key = self.config.get("PEXELS_API_KEY")
-        if not api_key: 
+        if not api_key:
             raise ValueError("Pexels API key is missing. Please add it in Settings.")
-        
-        headers = {'Authorization': api_key}
+
+        headers = {"Authorization": api_key}
         url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}&page={page}"
-        
+
         data = await self.make_search_request(url, headers)
         results = []
-        if data.get('photos'):
-            for photo in data['photos']:
-                src = photo.get('src') or {}
-                # Grid: medium (~350px tall) — not large2x. Save: large2x / large / original.
-                thumb_url = src.get('medium') or src.get('small') or src.get('large')
-                full_url = src.get('large2x') or src.get('large') or src.get('original')
-                results.append({
-                    'thumb': thumb_url,
-                    'full': full_url,
-                    'context_url': photo['url'],
-                    'provider': 'Pexels',
-                    **_preview_dims_from_original(photo.get('width'), photo.get('height')),
-                })
+        if data.get("photos"):
+            for photo in data["photos"]:
+                src = photo.get("src") or {}
+                ow, oh = photo.get("width"), photo.get("height")
+                thumb_url, full_url = pexels_thumb_full_urls(src, ow, oh)
+                results.append(
+                    {
+                        "thumb": thumb_url,
+                        "full": full_url,
+                        "context_url": photo["url"],
+                        "provider": "Pexels",
+                        **preview_dims_from_original(ow, oh),
+                    }
+                )
         return results
 
     async def search_unsplash(self, query, count=1, page=1):
@@ -190,33 +196,35 @@ class ImageSearcher:
         access_key = self.config.get("UNSPLASH_ACCESS_KEY")
         if not access_key:
             raise ValueError("Unsplash API key is missing. Please add it in Settings.")
-        
-        headers = {'Authorization': f'Client-ID {access_key}'}
+
+        headers = {"Authorization": f"Client-ID {access_key}"}
         url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}&page={page}"
-        
+
         data = await self.make_search_request(url, headers)
         results = []
-        if data.get('results'):
-            for photo in data['results']:
-                raw = photo['urls']['raw']
-                results.append({
-                    'thumb': _unsplash_raw_width(raw, GRID_THUMB_MAX_DIM),
-                    'full': _unsplash_raw_width(raw, SAVE_MAX_DIM),
-                    'context_url': photo['links']['html'],
-                    'provider': 'Unsplash',
-                    **_preview_dims_from_original(photo.get('width'), photo.get('height')),
-                })
+        if data.get("results"):
+            for photo in data["results"]:
+                raw = photo["urls"]["raw"]
+                ow, oh = photo.get("width"), photo.get("height")
+                thumb_url, full_url = unsplash_thumb_full_urls(raw, ow, oh)
+                results.append(
+                    {
+                        "thumb": thumb_url,
+                        "full": full_url,
+                        "context_url": photo["links"]["html"],
+                        "provider": "Unsplash",
+                        **preview_dims_from_original(ow, oh),
+                    }
+                )
         return results
 
     async def search_freepik(self, query, count=1, page=1):
         """Searches Freepik."""
         api_key = self.config.get("FREEPIK_API_KEY")
-        if not api_key: 
+        if not api_key:
             raise ValueError("Freepik API key is missing. Please add it in Settings.")
-        
-        headers = {'x-freepik-api-key': api_key}
-        # Freepik supports deepObject filters. Use license filtering so we
-        # prefer royalty-free assets over premium ones.
+
+        headers = {"x-freepik-api-key": api_key}
         params = {
             "term": query,
             "limit": count,
@@ -224,12 +232,11 @@ class ImageSearcher:
             "filters[license][freemium]": 1,
         }
         url = "https://api.freepik.com/v1/resources?" + urllib.parse.urlencode(params)
-        
+
         data = await self.make_search_request(url, headers)
         results = []
-        if data.get('data'):
-            for item in data['data']:
-                # Defensive client-side filtering in case the API returns mixed license types.
+        if data.get("data"):
+            for item in data["data"]:
                 licenses = item.get("licenses")
                 if isinstance(licenses, list):
                     license_types = {
@@ -242,16 +249,18 @@ class ImageSearcher:
                         continue
                     if license_types and not (license_types & free_types):
                         continue
-                if 'image' in item and 'source' in item['image']:
-                    fw, fh = _parse_freepik_source_size(item['image'])
-                    url = item['image']['source']['url']
-                    results.append({
-                        'thumb': url,
-                        'full': url,
-                        'context_url': item.get('url', '#'),
-                        'provider': 'Freepik',
-                        **_preview_dims_from_original(fw, fh, max_dim=GRID_THUMB_MAX_DIM),
-                    })
+                if "image" in item and "source" in item["image"]:
+                    fw, fh = _parse_freepik_source_size(item["image"])
+                    img_url = item["image"]["source"]["url"]
+                    results.append(
+                        {
+                            "thumb": img_url,
+                            "full": img_url,
+                            "context_url": item.get("url", "#"),
+                            "provider": "Freepik",
+                            **preview_dims_from_original(fw, fh, max_dim=GRID_THUMB_MAX_DIM),
+                        }
+                    )
         return results
 
     async def search_pixabay(self, query, count=1, page=1):
@@ -260,7 +269,6 @@ class ImageSearcher:
         if not api_key:
             raise ValueError("Pixabay API key is missing. Please add it in Settings.")
 
-        # per_page must be 3–200; request enough rows then trim to count.
         per_page = max(3, min(count, 200))
         params = {
             "key": api_key,
@@ -273,80 +281,127 @@ class ImageSearcher:
         data = await self.make_search_request(url, headers={})
         results = []
         for hit in data.get("hits", [])[:count]:
-            wf = hit.get("webformatURL", "")
-            # Grid: ~340px webformat variant; save: full HD / large when available.
-            thumb = _pixabay_grid_thumb_url(wf) or wf or hit.get("previewURL", "")
-            full = hit.get("fullHDURL") or hit.get("largeImageURL") or wf or ""
-            results.append({
-                "thumb": thumb,
-                "full": full,
-                "context_url": hit.get("pageURL", ""),
-                "provider": "Pixabay",
-                **_preview_dims_from_original(
-                    hit.get("imageWidth"), hit.get("imageHeight"), max_dim=GRID_THUMB_MAX_DIM
-                ),
-            })
+            ow, oh = hit.get("imageWidth"), hit.get("imageHeight")
+            thumb_url, full_url = pixabay_thumb_full_urls(hit, ow, oh)
+            results.append(
+                {
+                    "thumb": thumb_url,
+                    "full": full_url,
+                    "context_url": hit.get("pageURL", ""),
+                    "provider": "Pixabay",
+                    **preview_dims_from_original(ow, oh, max_dim=GRID_THUMB_MAX_DIM),
+                }
+            )
         return results
 
     async def search_wikimedia(self, query, count=1, page=1):
         """Searches Wikimedia Commons. Free, no API key required."""
-        import urllib.parse
-        # Wikimedia paginates via offset, not page numbers
         offset = (page - 1) * count
-        # Fetch extra candidates so we have enough after filtering non-images
         limit = min(count * 3, 50)
         params = {
-            'action': 'query',
-            'generator': 'search',
-            'gsrnamespace': '6',   # File: namespace only
-            'gsrsearch': query,
-            'gsrlimit': str(limit),
-            'gsroffset': str(offset),
-            'prop': 'imageinfo',
-            'iiprop': 'url|mime',
-            # Grid-sized thumb only; `full` uses original `url` (see below).
-            'iiurlwidth': str(GRID_THUMB_MAX_DIM),
-            'format': 'json',
-            'origin': '*',
+            "action": "query",
+            "generator": "search",
+            "gsrnamespace": "6",
+            "gsrsearch": query,
+            "gsrlimit": str(limit),
+            "gsroffset": str(offset),
+            "prop": "imageinfo",
+            "iiprop": "url|mime|size",
+            # Authoritative grid thumb: API returns ``thumburl`` for this width (no client-built /thumb/).
+            "iiurlwidth": str(GRID_THUMB_MAX_DIM),
+            "format": "json",
+            "origin": "*",
         }
-        url = "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode(params)
+        url = _COMMONS_API + "?" + urllib.parse.urlencode(params)
+
+        headers = {
+            "User-Agent": "AnkiImageUpdater/1.0 (https://github.com/LeoFidjeland/anki-image-updater; open-source tool)"
+        }
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # Wikimedia API requires a descriptive User-Agent; blocks anonymous bots
-            headers = {'User-Agent': 'AnkiImageUpdater/1.0 (https://github.com/anki-image-updater; open-source tool)'}
             r = await client.get(url, headers=headers)
             r.raise_for_status()
             data = r.json()
 
-        results = []
-        pages = data.get('query', {}).get('pages', {})
-        # Wikimedia generator search returns "pages" as an object (dict),
-        # so iterating values() doesn't preserve ranking/offset order.
-        # The API includes an `index` field per result; sort by it so that
-        # pagination/truncation behaves predictably.
-        ordered_pages = sorted(pages.values(), key=lambda p: p.get('index', 0))
-        for page_data in ordered_pages:
-            if len(results) >= count:
-                break
-            imageinfo = page_data.get('imageinfo', [])
-            if not imageinfo:
-                continue
-            info = imageinfo[0]
-            mime = info.get('mime', '')
-            # Skip non-raster images (PDFs, SVGs, audio/video, etc.)
-            if not mime.startswith('image/') or mime == 'image/svg+xml':
-                continue
-            title = page_data.get('title', '')
-            context_url = "https://commons.wikimedia.org/wiki/" + urllib.parse.quote(title.replace(' ', '_'))
-            tw = info.get('thumbwidth') or info.get('width')
-            th = info.get('thumbheight') or info.get('height')
-            thumb_url = info.get('thumburl') or info.get('url', '')
-            full_url = info.get('url') or thumb_url
-            results.append({
-                'thumb': thumb_url,
-                'full': full_url,
-                'context_url': context_url,
-                'provider': 'Wikimedia',
-                **_thumb_dims(tw, th),
-            })
+            rows: list[dict] = []
+            pages = data.get("query", {}).get("pages", {})
+            ordered_pages = sorted(pages.values(), key=lambda p: p.get("index", 0))
+            for page_data in ordered_pages:
+                if len(rows) >= count:
+                    break
+                imageinfo = page_data.get("imageinfo", [])
+                if not imageinfo:
+                    continue
+                info = imageinfo[0]
+                mime = info.get("mime", "")
+                if not mime.startswith("image/") or mime == "image/svg+xml":
+                    continue
+                title = page_data.get("title", "")
+                original_url = (info.get("url") or "").strip()
+                ow, oh = info.get("width"), info.get("height")
+                thumb_url = wikimedia_grid_preview_url(info, original_url)
+                api_thumb = (info.get("thumburl") or "").strip()
+                if (
+                    api_thumb
+                    and thumb_url == api_thumb
+                    and info.get("thumbwidth")
+                    and info.get("thumbheight")
+                ):
+                    layout_dims = thumb_dims(info["thumbwidth"], info["thumbheight"])
+                else:
+                    layout_dims = preview_dims_from_original(ow, oh)
+
+                save_w = wikimedia_save_iiurlwidth(ow, oh)
+                rows.append(
+                    {
+                        "title": title,
+                        "info": info,
+                        "original_url": original_url,
+                        "thumb_url": thumb_url,
+                        "layout_dims": layout_dims,
+                        "save_w": save_w,
+                    }
+                )
+
+            by_save_w: dict = defaultdict(list)
+            for row in rows:
+                by_save_w[row["save_w"]].append(row)
+
+            full_by_title: dict[str, str] = {}
+            for save_w, group in by_save_w.items():
+                if save_w is None:
+                    for row in group:
+                        full_by_title[row["title"]] = row["original_url"] or row["info"].get("url") or ""
+                    continue
+                titles = [row["title"] for row in group]
+                batch = await _wikimedia_imageinfo_by_title(client, headers, titles, int(save_w))
+                for row in group:
+                    tit = row["title"]
+                    bi = batch.get(tit)
+                    if bi:
+                        fu = (bi.get("thumburl") or bi.get("url") or "").strip()
+                        full_by_title[tit] = fu or row["original_url"]
+                    else:
+                        full_by_title[tit] = row["original_url"] or row["info"].get("url") or ""
+
+            results = []
+            for row in rows:
+                context_url = "https://commons.wikimedia.org/wiki/" + urllib.parse.quote(
+                    row["title"].replace(" ", "_")
+                )
+                results.append(
+                    {
+                        "thumb": row["thumb_url"],
+                        "full": full_by_title.get(row["title"], row["original_url"]),
+                        "context_url": context_url,
+                        "provider": "Wikimedia",
+                        **row["layout_dims"],
+                    }
+                )
+
         return results
+
+
+# Back-compat names for tests and any external imports
+_preview_dims_from_original = preview_dims_from_original
+_wikimedia_grid_thumb_url = wikimedia_shrink_existing_thumb_url
