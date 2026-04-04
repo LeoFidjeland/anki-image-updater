@@ -7,6 +7,8 @@ APP_NAME = "anki-image-updater"
 AUTHOR = "LeoFidjeland"
 
 class ConfigManager:
+    """User settings; all built-in defaults live in DEFAULT_CONFIG only."""
+
     DEFAULT_CONFIG = {
         "PEXELS_API_KEY": "",
         "UNSPLASH_ACCESS_KEY": "",
@@ -15,8 +17,8 @@ class ConfigManager:
         "DEFAULT_FIELD_SEARCH": "English",
         "DEFAULT_FIELD_IMAGE": "Image",
         "DEFAULT_FIELD_SOURCE": "Image Source",
-        "DEFAULT_IMAGES_PER_TERM": 6,
-        "DEFAULT_TAG": "Replaced"
+        "DEFAULT_IMAGES_PER_TERM": 12,
+        "DEFAULT_TAG": "Replaced",
     }
 
     def __init__(self):
@@ -35,6 +37,13 @@ class ConfigManager:
                     self._config.update(saved_config)
             except (json.JSONDecodeError, OSError) as e:
                 print(f"Error loading config: {e}")
+        self._backfill_defaults()
+
+    def _backfill_defaults(self):
+        """Ensure every key in DEFAULT_CONFIG exists (e.g. after a partial or older file)."""
+        for key, value in self.DEFAULT_CONFIG.items():
+            if key not in self._config:
+                self._config[key] = value
 
     def save(self):
         """Saves current configuration to the user config file."""
@@ -46,13 +55,25 @@ class ConfigManager:
             print(f"Error saving config: {e}")
 
     def get(self, key, default=None):
-        """Gets a configuration value, prioritizing env vars then config file."""
-        # Environment variable override (useful for dev/testing)
+        """Return a setting: env override, then saved value, then DEFAULT_CONFIG, then default."""
         env_val = os.getenv(key)
         if env_val is not None:
             return env_val
-        
-        return self._config.get(key, default)
+
+        if key in self._config:
+            return self._config[key]
+        if key in self.DEFAULT_CONFIG:
+            return self.DEFAULT_CONFIG[key]
+        return default
+
+    def get_int(self, key: str) -> int:
+        """Parse integer setting; invalid values fall back to DEFAULT_CONFIG[key]."""
+        fallback = int(self.DEFAULT_CONFIG[key])
+        raw = self.get(key)
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return fallback
 
     def set(self, key, value):
         """Sets a configuration value and saves it."""

@@ -346,7 +346,7 @@ class AppUI:
                         ui.input("Image Source Field", value=cfg.get("DEFAULT_FIELD_SOURCE"), on_change=lambda e: cfg_vals.__setitem__('field_source',  e.value)).props('dense outlined').classes('w-full')
 
                         ui.label("Behaviour").classes('text-sm font-bold text-gray-600 mt-3')
-                        ui.input("Images per Term", value=str(cfg.get("DEFAULT_IMAGES_PER_TERM", 6)), on_change=lambda e: cfg_vals.__setitem__('images_per_term', e.value)).props('dense outlined type=number').classes('w-full')
+                        ui.input("Images per Term", value=str(cfg.get("DEFAULT_IMAGES_PER_TERM")), on_change=lambda e: cfg_vals.__setitem__('images_per_term', e.value)).props('dense outlined type=number').classes('w-full')
                         ui.input("Tag Added on Save", value=cfg.get("DEFAULT_TAG"), on_change=lambda e: cfg_vals.__setitem__('tag', e.value)).props('dense outlined').classes('w-full')
 
                         ui.label(f"Config file: {cfg.config_path}").classes('text-xs text-gray-400 mt-2')
@@ -361,7 +361,7 @@ class AppUI:
                         'field_search':   cfg.get("DEFAULT_FIELD_SEARCH"),
                         'field_image':    cfg.get("DEFAULT_FIELD_IMAGE"),
                         'field_source':   cfg.get("DEFAULT_FIELD_SOURCE"),
-                        'images_per_term': str(cfg.get("DEFAULT_IMAGES_PER_TERM", 6)),
+                        'images_per_term': str(cfg.get("DEFAULT_IMAGES_PER_TERM")),
                         'tag':            cfg.get("DEFAULT_TAG"),
                     }
 

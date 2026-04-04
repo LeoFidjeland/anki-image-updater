@@ -42,15 +42,11 @@ class CardManagerLogic:
         self.current_term = ""
         self.current_old_image_b64 = None
         
-        self.field_term = self.config.get("DEFAULT_FIELD_SEARCH", "English")
-        self.field_image = self.config.get("DEFAULT_FIELD_IMAGE", "Image")
-        self.field_source = self.config.get("DEFAULT_FIELD_SOURCE", "Image Source")
-        self.tag_auto_replaced = self.config.get("DEFAULT_TAG", "Replaced")
-        
-        try:
-            self.count = int(self.config.get("DEFAULT_IMAGES_PER_TERM", 6))
-        except (ValueError, TypeError):
-            self.count = 6
+        self.field_term = self.config.get("DEFAULT_FIELD_SEARCH")
+        self.field_image = self.config.get("DEFAULT_FIELD_IMAGE")
+        self.field_source = self.config.get("DEFAULT_FIELD_SOURCE")
+        self.tag_auto_replaced = self.config.get("DEFAULT_TAG")
+        self.count = self.config.get_int("DEFAULT_IMAGES_PER_TERM")
 
     def _note_has_image_fields(self, fields: dict) -> bool:
         """True if this note type defines the image + source fields we write to."""
