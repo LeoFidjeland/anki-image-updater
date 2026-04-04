@@ -34,6 +34,37 @@ async def test_card_manager_load_deck_no_cards(card_logic_manager):
     assert not success
     assert "No cards found" in msg
 
+
+@pytest.mark.asyncio
+async def test_load_deck_skips_notes_without_image_fields(card_logic_manager, mock_anki_client):
+    """Notes whose type lacks Image / Image Source must not appear in the queue."""
+    mock_anki_client.find_notes = AsyncMock(return_value=[1, 2])
+    mock_anki_client.get_notes_info = AsyncMock(
+        return_value=[
+            {
+                "noteId": 1,
+                "fields": {
+                    "English": {"value": "keep"},
+                    "Image": {"value": ""},
+                    "Image Source": {"value": ""},
+                },
+            },
+            {
+                "noteId": 2,
+                "fields": {
+                    "English": {"value": "wrong model"},
+                },
+            },
+        ]
+    )
+
+    success, msg = await card_logic_manager.load_deck("My Deck")
+    assert success
+    assert len(card_logic_manager.valid_notes) == 1
+    assert card_logic_manager.valid_notes[0]["noteId"] == 1
+    assert "Found 1 cards" in msg
+
+
 @pytest.mark.asyncio
 async def test_card_manager_advance_to_next_valid_card_end_of_list(card_logic_manager):
     """Test behavior when all cards have been processed."""
@@ -66,6 +97,8 @@ async def test_card_manager_apply_image_to_card(card_logic_manager, monkeypatch)
         "noteId": 555,
         "fields": {
             "English": {"value": "Dog"},
+            "Image": {"value": ""},
+            "Image Source": {"value": ""},
         },
     }
     card_logic_manager.current_note = note

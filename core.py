@@ -2,7 +2,7 @@ import time
 import re
 import logging
 from config_manager import ConfigManager
-from anki_client import AnkiClient
+from anki_client import AnkiClient, AnkiConnectError
 from utils import download_image_as_base64
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,10 @@ class CardManagerLogic:
         except (ValueError, TypeError):
             self.count = 6
 
+    def _note_has_image_fields(self, fields: dict) -> bool:
+        """True if this note type defines the image + source fields we write to."""
+        return self.field_image in fields and self.field_source in fields
+
     async def load_deck(self, deck_name):
         """
         Loads all cards from a deck in two fast steps:
@@ -61,18 +65,30 @@ class CardManagerLogic:
         """
         logger.info(f"Scanning deck: {deck_name}")
         query = f'deck:"{deck_name}" -tag:{self.tag_auto_replaced}::Skipped'
-        all_ids = await self.anki.find_notes(query)
-        
+        try:
+            all_ids = await self.anki.find_notes(query)
+        except AnkiConnectError as e:
+            logger.error("AnkiConnect error while finding notes: %s", e)
+            return False, f"Could not scan deck (Anki error): {e}"
+
         if not all_ids:
             return False, f"No cards found (or all skipped) in '{deck_name}'"
 
         logger.info(f"Fetching info for {len(all_ids)} candidates in one batch...")
-        all_notes = await self.anki.get_notes_info(all_ids)
+        try:
+            all_notes = await self.anki.get_notes_info(all_ids)
+        except AnkiConnectError as e:
+            logger.error("AnkiConnect error while loading note info: %s", e)
+            return False, f"Could not load note info (Anki error): {e}"
 
         # Pre-filter in Python — no more per-card HTTP calls during scan
         self.valid_notes = []
+        skipped_wrong_model = 0
         for note in all_notes:
             fields = note['fields']
+            if not self._note_has_image_fields(fields):
+                skipped_wrong_model += 1
+                continue
             source_val = fields.get(self.field_source, {}).get('value', '').strip()
             if source_val:
                 continue  # already has an image source
@@ -81,6 +97,14 @@ class CardManagerLogic:
             if not term:
                 continue  # empty search term
             self.valid_notes.append(note)
+
+        if skipped_wrong_model:
+            logger.info(
+                "Skipped %s notes (note type has no '%s' and/or '%s' field).",
+                skipped_wrong_model,
+                self.field_image,
+                self.field_source,
+            )
 
         if not self.valid_notes:
             return False, f"No cards needing images in '{deck_name}'"
@@ -156,6 +180,13 @@ class CardManagerLogic:
         if not note:
             raise ActionError("No card to update.")
 
+        nf = note['fields']
+        if not self._note_has_image_fields(nf):
+            raise ActionError(
+                f"This note type has no '{self.field_image}' and/or '{self.field_source}' "
+                "field — cannot save the image. Check Settings field names or skip this card."
+            )
+
         url = img_data['full']
         provider = img_data['provider']
         
@@ -173,9 +204,7 @@ class CardManagerLogic:
         timestamp = int(time.time())
         filename = f"{stem}_{provider_slug}_{timestamp}.jpg"
 
-        res = await self.anki.store_media_file(filename, image_b64)
-        if res is None:
-            logger.warning(f"Store media file may have failed for {filename}")
+        await self.anki.store_media_file(filename, image_b64)
 
         new_source_content = img_data['context_url']
         new_image_content = f'<img src="{filename}">'

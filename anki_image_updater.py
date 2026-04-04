@@ -12,7 +12,7 @@ if getattr(sys, 'frozen', False):
 from nicegui import ui, app, client
 
 from config_manager import ConfigManager
-from anki_client import AnkiClient
+from anki_client import AnkiClient, AnkiConnectError
 from search_providers import ImageSearcher
 from core import CardManagerLogic, ActionError
 
@@ -286,15 +286,18 @@ class AppUI:
                         note=snapshot_note,
                         term=snapshot_term,
                     )
-                    logger.info(f"Background update complete for '{updated_term}'")
+                    logger.info("Update succeeded for '%s'", updated_term)
                     self._session_replaced += 1
                     self._update_status_bar()
                     notify(f"✅ Saved '{updated_term}'", type='positive')
                 except ActionError as e:
                     notify(str(e), type='negative')
-                    logger.error(f"Background update failed: {e}")
+                    logger.error("Update failed: %s", e)
+                except AnkiConnectError as e:
+                    logger.error("Update failed (Anki): %s", e)
+                    notify(f"Could not save to Anki: {e}", type='negative')
                 except Exception as e:
-                    logger.exception("Unexpected error in background image update")
+                    logger.exception("Unexpected error in image update")
                     notify(f"Error saving image: {e}", type='negative')
 
         # Fire off the background Anki update — user won't wait for this
@@ -310,7 +313,12 @@ class AppUI:
             return
         self._is_navigating = True
         try:
-            term = await self.logic.skip_card()
+            try:
+                term = await self.logic.skip_card()
+            except AnkiConnectError as e:
+                logger.error("Skip card failed (Anki): %s", e)
+                notify(f"Could not tag skipped card in Anki: {e}", type='negative')
+                return
             if term:
                 self._session_skipped += 1
                 notify(f"Skipped '{term}'", type='warning')

@@ -3,6 +3,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+class AnkiConnectError(Exception):
+    """AnkiConnect request failed (network, HTTP, or non-null API error)."""
+
+    pass
+
+
 class AnkiClient:
     """Handles communication with the local AnkiConnect instance."""
     
@@ -14,38 +21,49 @@ class AnkiClient:
         payload = {"action": action, "version": 6}
         if params:
             payload["params"] = params
-        
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(self.url, json=payload)
                 response.raise_for_status()
                 data = response.json()
-                
+
             if len(data) != 2:
-                raise Exception("Response has an unexpected number of fields")
+                raise AnkiConnectError("Response has an unexpected number of fields")
             if "error" not in data:
-                raise Exception("Response is missing required error field")
+                raise AnkiConnectError("Response is missing required error field")
             if data["error"] is not None:
-                raise Exception(data["error"])
+                raise AnkiConnectError(str(data["error"]))
             return data["result"]
+        except AnkiConnectError:
+            raise
         except httpx.RequestError as e:
             logger.error(f"Connection error to Anki: {e}")
-            return None
+            raise AnkiConnectError(f"Could not connect to Anki: {e}") from e
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error from Anki: {e}")
+            raise AnkiConnectError(f"HTTP error talking to Anki: {e}") from e
         except Exception as e:
             logger.error(f"Error invoking Anki method '{action}': {e}")
-            return None
+            raise AnkiConnectError(str(e)) from e
 
     async def fetch_decks(self):
         """Returns a list of all deck names."""
-        return await self.invoke("deckNames") or []
+        try:
+            result = await self.invoke("deckNames")
+            return result if result else []
+        except AnkiConnectError:
+            return []
 
     async def find_notes(self, query):
         """Returns a list of note IDs matching the query string."""
-        return await self.invoke("findNotes", {"query": query}) or []
+        result = await self.invoke("findNotes", {"query": query})
+        return result if result is not None else []
 
     async def get_notes_info(self, note_ids):
         """Returns list of note info dicts for given IDs."""
-        return await self.invoke("notesInfo", {"notes": note_ids}) or []
+        result = await self.invoke("notesInfo", {"notes": note_ids})
+        return result if result is not None else []
 
     async def store_media_file(self, filename, base64_data):
         """Stores a base64 encoded media file in Anki."""

@@ -1,5 +1,5 @@
 import pytest
-from anki_client import AnkiClient
+from anki_client import AnkiClient, AnkiConnectError
 
 def check_anki_running():
     """Helper to check if AnkiConnect is running on localhost:8765."""
@@ -29,6 +29,6 @@ async def test_anki_invoke_deck_names(anki):
 
 @pytest.mark.asyncio
 async def test_anki_invoke_invalid_action(anki):
-    """Tests error handling for invalid AnkiConnect actions."""
-    result = await anki.invoke("someNonExistentActionForTesting")
-    assert result is None
+    """Invalid AnkiConnect actions surface as AnkiConnectError (not silent None)."""
+    with pytest.raises(AnkiConnectError):
+        await anki.invoke("someNonExistentActionForTesting")
