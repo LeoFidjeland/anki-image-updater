@@ -333,11 +333,36 @@ class ImageSearcher:
                 if not imageinfo:
                     continue
                 info = imageinfo[0]
-                mime = info.get("mime", "")
-                if not mime.startswith("image/") or mime == "image/svg+xml":
+                mime = (info.get("mime") or "").split(";")[0].strip().lower()
+                if not mime.startswith("image/"):
                     continue
                 title = page_data.get("title", "")
                 original_url = (info.get("url") or "").strip()
+                if not original_url:
+                    continue
+
+                # SVG: use the original file for grid + save (no raster thumb / iiurl batch).
+                if mime == "image/svg+xml":
+                    ow, oh = info.get("width"), info.get("height")
+                    layout_dims = preview_dims_from_original(ow, oh)
+                    if not layout_dims:
+                        layout_dims = thumb_dims(
+                            GRID_THUMB_MAX_DIM,
+                            int(round(GRID_THUMB_MAX_DIM * 3 / 4)),
+                        )
+                    rows.append(
+                        {
+                            "title": title,
+                            "info": info,
+                            "original_url": original_url,
+                            "thumb_url": original_url,
+                            "layout_dims": layout_dims,
+                            "save_w": None,
+                            "media_ext": "svg",
+                        }
+                    )
+                    continue
+
                 ow, oh = info.get("width"), info.get("height")
                 thumb_url = wikimedia_grid_preview_url(info, original_url)
                 api_thumb = (info.get("thumburl") or "").strip()
@@ -360,6 +385,7 @@ class ImageSearcher:
                         "thumb_url": thumb_url,
                         "layout_dims": layout_dims,
                         "save_w": save_w,
+                        "media_ext": None,
                     }
                 )
 
@@ -389,15 +415,16 @@ class ImageSearcher:
                 context_url = "https://commons.wikimedia.org/wiki/" + urllib.parse.quote(
                     row["title"].replace(" ", "_")
                 )
-                results.append(
-                    {
-                        "thumb": row["thumb_url"],
-                        "full": full_by_title.get(row["title"], row["original_url"]),
-                        "context_url": context_url,
-                        "provider": "Wikimedia",
-                        **row["layout_dims"],
-                    }
-                )
+                item = {
+                    "thumb": row["thumb_url"],
+                    "full": full_by_title.get(row["title"], row["original_url"]),
+                    "context_url": context_url,
+                    "provider": "Wikimedia",
+                    **row["layout_dims"],
+                }
+                if row.get("media_ext"):
+                    item["media_ext"] = row["media_ext"]
+                results.append(item)
 
         return results
 

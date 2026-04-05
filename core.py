@@ -1,11 +1,49 @@
+import base64
 import time
 import re
 import logging
+from urllib.parse import urlparse
+
 from config_manager import ConfigManager
 from anki_client import AnkiClient, AnkiConnectError
-from utils import download_image_as_base64
+from image_sizing import preview_dims_from_original
+from utils import download_image_as_base64, parse_svg_aspect_dimensions
 
 logger = logging.getLogger(__name__)
+
+_MIME_BY_EXT = {
+    "svg": "image/svg+xml",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+}
+
+
+def _file_extension_from_url(url: str) -> str:
+    """Infer stored filename extension from the download URL path (default ``jpg``)."""
+    path = (urlparse(url or "").path or "").lower()
+    if path.endswith(".svg"):
+        return "svg"
+    if path.endswith(".png"):
+        return "png"
+    if path.endswith(".gif"):
+        return "gif"
+    if path.endswith(".webp"):
+        return "webp"
+    if path.endswith(".jpeg"):
+        return "jpeg"
+    if path.endswith(".jpg"):
+        return "jpg"
+    return "jpg"
+
+
+def _data_url_for_anki_media_filename(filename: str, b64_data: str) -> str:
+    """Build a browser-correct data URI for Anki media (SVG is not ``image/jpeg``)."""
+    ext = (filename.rsplit(".", 1)[-1] if "." in filename else "").lower()
+    mime = _MIME_BY_EXT.get(ext, "image/jpeg")
+    return f"data:{mime};base64,{b64_data}"
 
 
 def _sanitize_filename_stem(text: str, max_len: int = 48) -> str:
@@ -41,7 +79,8 @@ class CardManagerLogic:
         self.current_note = None
         self.current_term = ""
         self.current_old_image_b64 = None
-        
+        self.current_old_image_layout_dims = {}
+
         self.field_term = self.config.get("DEFAULT_FIELD_SEARCH")
         self.field_image = self.config.get("DEFAULT_FIELD_IMAGE")
         self.field_source = self.config.get("DEFAULT_FIELD_SOURCE")
@@ -132,13 +171,32 @@ class CardManagerLogic:
         # Fetch the existing image preview (still one HTTP call per card, but only
         # for cards we're actually going to show — not for the thousands we're skipping)
         self.current_old_image_b64 = None
+        self.current_old_image_layout_dims = {}
         old_img_html = fields.get(self.field_image, {}).get('value', '')
         match = re.search(r'src="([^"]+)"', old_img_html)
         if match:
             filename = match.group(1)
             b64_data = await self.anki.get_media_file_base64(filename)
             if b64_data:
-                self.current_old_image_b64 = f"data:image/jpeg;base64,{b64_data}"
+                self.current_old_image_b64 = _data_url_for_anki_media_filename(
+                    filename, b64_data
+                )
+                if filename.lower().endswith(".svg"):
+                    try:
+                        raw = base64.b64decode(b64_data).decode(
+                            "utf-8", errors="replace"
+                        )
+                        parsed = parse_svg_aspect_dimensions(raw)
+                        if parsed:
+                            ow, oh = parsed
+                            self.current_old_image_layout_dims = (
+                                preview_dims_from_original(ow, oh)
+                            )
+                    except Exception:
+                        logger.debug(
+                            "Could not infer SVG preview aspect ratio",
+                            exc_info=True,
+                        )
 
         return True
 
@@ -194,7 +252,8 @@ class CardManagerLogic:
         Downloads the full-res image from the provider, pushes to Anki,
         updates fields, and adds tags.
 
-        Media filename: ``{stem}_{provider}_{unix_timestamp}.jpg`` where *stem* comes from
+        Media filename: ``{stem}_{provider}_{unix_timestamp}.{ext}`` (*ext* from URL or
+        ``img_data['media_ext']``, default ``jpg``) where *stem* comes from
         the note's configured search field (``field_term``), not the live search-box text.
         The trailing number is Unix time in seconds so re-saves get unique names.
 
@@ -221,10 +280,14 @@ class CardManagerLogic:
 
         url = img_data['full']
         provider = img_data['provider']
-        
+
         image_b64 = await download_image_as_base64(url)
         if not image_b64:
             raise ActionError("Failed to download image from the provider.")
+
+        ext = (img_data.get("media_ext") or "").strip().lower().lstrip(".")
+        if not ext:
+            ext = _file_extension_from_url(url)
 
         # Filename uses the card's configured search field from the note (e.g. English),
         # not the live search box text — so editing the query does not change the stem.
@@ -234,7 +297,7 @@ class CardManagerLogic:
         provider_slug = _filename_provider_slug(provider)
         # Unix time (seconds) — keeps names unique when re-saving the same card.
         timestamp = int(time.time())
-        filename = f"{stem}_{provider_slug}_{timestamp}.jpg"
+        filename = f"{stem}_{provider_slug}_{timestamp}.{ext}"
 
         await self.anki.store_media_file(filename, image_b64)
 

@@ -10,6 +10,20 @@ def test_sanitize_filename_stem_and_provider_slug():
     assert core._filename_provider_slug("Pexels") == "pexels"
     assert core._filename_provider_slug("Wikimedia") == "wikimedia"
 
+
+def test_file_extension_from_url():
+    assert core._file_extension_from_url("https://x.org/a.JPG") == "jpg"
+    assert core._file_extension_from_url("https://x.org/icon.svg") == "svg"
+    assert core._file_extension_from_url("https://x.org/p.png") == "png"
+
+
+def test_data_url_for_anki_media_filename():
+    s = core._data_url_for_anki_media_filename("card.svg", "QUJD")
+    assert s.startswith("data:image/svg+xml;base64,")
+    assert core._data_url_for_anki_media_filename("x.jpeg", "QQ").startswith(
+        "data:image/jpeg;base64,"
+    )
+
 @pytest.fixture
 def mock_anki_client():
     mock = AsyncMock()
@@ -183,3 +197,37 @@ async def test_card_manager_apply_image_to_card(card_logic_manager, monkeypatch)
     card_logic_manager.anki.store_media_file.assert_awaited_once_with(expected_filename, "fake_base64_data")
     card_logic_manager.anki.update_note_fields.assert_awaited_once()
     card_logic_manager.anki.add_tags.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_card_manager_apply_image_svg_uses_svg_filename(card_logic_manager, monkeypatch):
+    note = {
+        "noteId": 777,
+        "fields": {
+            "English": {"value": "Icon"},
+            "Image": {"value": ""},
+            "Image Source": {"value": ""},
+        },
+    }
+    card_logic_manager.current_note = note
+    card_logic_manager.current_term = "Icon"
+
+    img_data = {
+        "full": "https://upload.wikimedia.org/wikipedia/commons/0/00/Example.svg",
+        "provider": "Wikimedia",
+        "context_url": "https://commons.wikimedia.org/wiki/File:Example.svg",
+        "media_ext": "svg",
+    }
+
+    monkeypatch.setattr("core.download_image_as_base64", AsyncMock(return_value="c3ZnCg=="))
+    monkeypatch.setattr(core.time, "time", lambda: 999)
+
+    card_logic_manager.anki.store_media_file = AsyncMock(return_value=None)
+    card_logic_manager.anki.update_note_fields = AsyncMock(return_value=None)
+    card_logic_manager.anki.add_tags = AsyncMock(return_value=None)
+
+    await card_logic_manager.apply_image_to_card(img_data)
+
+    fname = card_logic_manager.anki.store_media_file.call_args[0][0]
+    assert fname.endswith(".svg")
+    assert fname.startswith("icon_wikimedia_")

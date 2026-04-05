@@ -628,9 +628,21 @@ class AppUI:
                 # Current image
                 self._left_panel_heading('Image')
                 if self.logic.current_old_image_b64:
-                    ui.image(self.logic.current_old_image_b64).classes(
-                        'w-full rounded-lg border border-slate-200 shadow-md'
-                    ).props('no-transition')
+                    dims = getattr(
+                        self.logic, "current_old_image_layout_dims", None
+                    ) or {}
+                    tw, th = dims.get("thumb_width"), dims.get("thumb_height")
+                    with ui.element("div").classes(
+                        "w-full relative rounded-lg border border-slate-200 shadow-md "
+                        "overflow-hidden bg-white"
+                    ) as img_wrap:
+                        if tw and th:
+                            img_wrap.style(f"aspect-ratio: {tw} / {th}")
+                        else:
+                            img_wrap.classes("aspect-[4/3]")
+                        ui.image(self.logic.current_old_image_b64).classes(
+                            "absolute inset-0 w-full h-full object-contain"
+                        ).props("no-transition")
                 else:
                     ui.label("No image yet").classes(
                         'text-slate-400 italic text-sm py-6 text-center border border-dashed '

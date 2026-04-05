@@ -318,6 +318,70 @@ async def test_search_wikimedia_uses_api_thumbs_for_grid_and_save(mock_config, m
     assert "upload.wikimedia.org/wikipedia/commons/e/ef/Senador" not in results[0]["thumb"]
 
 
+@pytest.mark.asyncio
+async def test_search_wikimedia_svg_uses_original_no_batch(mock_config, mock_httpx):
+    """SVG uses the Commons file URL for grid + save; no second imageinfo batch."""
+    mock_client, mock_response = mock_httpx
+    svg_url = "https://upload.wikimedia.org/wikipedia/commons/3/3f/Example.svg"
+    search_json = {
+        "query": {
+            "pages": {
+                "1": {
+                    "index": 1,
+                    "title": "File:Example.svg",
+                    "imageinfo": [
+                        {
+                            "mime": "image/svg+xml",
+                            "url": svg_url,
+                            "size": 123,
+                            "width": 600,
+                            "height": 400,
+                        }
+                    ],
+                }
+            }
+        }
+    }
+    mock_response.json.return_value = search_json
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    searcher = ImageSearcher(mock_config)
+    results = await searcher.search_wikimedia("example", count=1)
+    assert len(results) == 1
+    assert results[0]["thumb"] == svg_url
+    assert results[0]["full"] == svg_url
+    assert results[0]["media_ext"] == "svg"
+    assert results[0]["thumb_width"] == 420
+    assert results[0]["thumb_height"] == 280
+    mock_client.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_wikimedia_svg_fallback_aspect_when_no_api_dims(
+    mock_config, mock_httpx
+):
+    """SVG without width/height from API uses 4:3 grid cell (matches UI default)."""
+    mock_client, mock_response = mock_httpx
+    svg_url = "https://upload.wikimedia.org/wikipedia/commons/x/x/Foo.svg"
+    mock_response.json.return_value = {
+        "query": {
+            "pages": {
+                "1": {
+                    "index": 1,
+                    "title": "File:Foo.svg",
+                    "imageinfo": [
+                        {"mime": "image/svg+xml", "url": svg_url, "size": 1}
+                    ],
+                }
+            }
+        }
+    }
+    mock_client.get = AsyncMock(return_value=mock_response)
+    results = await ImageSearcher(mock_config).search_wikimedia("x", count=1)
+    assert results[0]["thumb_width"] == GRID_THUMB_MAX_DIM
+    assert results[0]["thumb_height"] == int(round(GRID_THUMB_MAX_DIM * 3 / 4))
+
+
 def test_pexels_thumb_full_urls_respects_save_max(monkeypatch):
     src = {"large": "L", "large2x": "L2", "original": "O"}
     ow, oh = 2000, 1500
