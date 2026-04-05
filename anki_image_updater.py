@@ -18,6 +18,7 @@ from config_manager import ConfigManager
 from anki_client import AnkiClient, AnkiConnectError
 from search_providers import ImageSearcher
 from core import CardManagerLogic, ActionError
+from utils import strip_html_to_plain
 
 # Setup Logging
 logging.basicConfig(
@@ -470,10 +471,7 @@ class AppUI:
 
     @staticmethod
     def _strip_html_to_plain(html: str) -> str:
-        if not html:
-            return ""
-        s = re.sub(r"<[^>]+>", " ", html)
-        return re.sub(r"\s+", " ", s).strip()
+        return strip_html_to_plain(html)
 
     @staticmethod
     def _is_valid_http_url(s: str) -> bool:
