@@ -1,4 +1,3 @@
-import base64
 import time
 import re
 import logging
@@ -6,8 +5,7 @@ from urllib.parse import urlparse
 
 from config_manager import ConfigManager
 from anki_client import AnkiClient, AnkiConnectError
-from image_sizing import preview_dims_from_original
-from utils import download_image_as_base64, parse_svg_aspect_dimensions
+from utils import download_image_as_base64
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +77,6 @@ class CardManagerLogic:
         self.current_note = None
         self.current_term = ""
         self.current_old_image_b64 = None
-        self.current_old_image_layout_dims = {}
 
         self.field_term = self.config.get("DEFAULT_FIELD_SEARCH")
         self.field_image = self.config.get("DEFAULT_FIELD_IMAGE")
@@ -171,7 +168,6 @@ class CardManagerLogic:
         # Fetch the existing image preview (still one HTTP call per card, but only
         # for cards we're actually going to show — not for the thousands we're skipping)
         self.current_old_image_b64 = None
-        self.current_old_image_layout_dims = {}
         old_img_html = fields.get(self.field_image, {}).get('value', '')
         match = re.search(r'src="([^"]+)"', old_img_html)
         if match:
@@ -181,22 +177,6 @@ class CardManagerLogic:
                 self.current_old_image_b64 = _data_url_for_anki_media_filename(
                     filename, b64_data
                 )
-                if filename.lower().endswith(".svg"):
-                    try:
-                        raw = base64.b64decode(b64_data).decode(
-                            "utf-8", errors="replace"
-                        )
-                        parsed = parse_svg_aspect_dimensions(raw)
-                        if parsed:
-                            ow, oh = parsed
-                            self.current_old_image_layout_dims = (
-                                preview_dims_from_original(ow, oh)
-                            )
-                    except Exception:
-                        logger.debug(
-                            "Could not infer SVG preview aspect ratio",
-                            exc_info=True,
-                        )
 
         return True
 
