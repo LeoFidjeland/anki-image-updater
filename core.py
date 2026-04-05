@@ -166,6 +166,29 @@ class CardManagerLogic:
         logger.info(f"Marked OK '{term}'")
         return term
 
+    async def unset_image(self):
+        """Clears image + source fields and adds Unset tag."""
+        if not self.current_note:
+            return
+
+        note_id = self.current_note['noteId']
+        term = self.current_term
+        nf = self.current_note.get("fields") or {}
+
+        if not self._note_has_image_fields(nf):
+            raise ActionError(
+                f"This note type has no '{self.field_image}' and/or '{self.field_source}' "
+                "field — cannot unset. Check Settings field names."
+            )
+
+        await self.anki.update_note_fields(
+            note_id,
+            {self.field_image: "", self.field_source: ""},
+        )
+        await self.anki.add_tags([note_id], f"{self.tag_auto_replaced}::Unset")
+        logger.info(f"Unset image for '{term}'")
+        return term
+
     async def apply_image_to_card(self, img_data, *, note=None, term=None):
         """
         Downloads the full-res image from the provider, pushes to Anki,

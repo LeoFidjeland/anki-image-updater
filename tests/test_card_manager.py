@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 import core
+from core import ActionError
 
 
 def test_sanitize_filename_stem_and_provider_slug():
@@ -107,6 +108,42 @@ async def test_card_manager_ok_card(card_logic_manager):
 
     card_logic_manager.anki.add_tags.assert_awaited_once_with([999], "Replaced::OK")
     assert term == "TestTerm"
+
+
+@pytest.mark.asyncio
+async def test_card_manager_unset_image(card_logic_manager):
+    card_logic_manager.current_note = {
+        "noteId": 999,
+        "fields": {
+            "English": {"value": "Term"},
+            "Image": {"value": '<img src="x.jpg">'},
+            "Image Source": {"value": "https://example.com/src"},
+        },
+    }
+    card_logic_manager.current_term = "Term"
+
+    card_logic_manager.anki.update_note_fields = AsyncMock(return_value=None)
+    card_logic_manager.anki.add_tags = AsyncMock(return_value=None)
+
+    term = await card_logic_manager.unset_image()
+
+    card_logic_manager.anki.update_note_fields.assert_awaited_once_with(
+        999, {"Image": "", "Image Source": ""}
+    )
+    card_logic_manager.anki.add_tags.assert_awaited_once_with([999], "Replaced::Unset")
+    assert term == "Term"
+
+
+@pytest.mark.asyncio
+async def test_card_manager_unset_image_requires_image_fields(card_logic_manager):
+    card_logic_manager.current_note = {
+        "noteId": 1,
+        "fields": {"English": {"value": "a"}},
+    }
+    card_logic_manager.current_term = "a"
+
+    with pytest.raises(ActionError):
+        await card_logic_manager.unset_image()
 
 
 @pytest.mark.asyncio

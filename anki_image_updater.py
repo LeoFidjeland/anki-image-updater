@@ -1,9 +1,12 @@
 import sys
 import os
 import re
+import html
 import asyncio
 import argparse
 import logging
+from typing import Optional
+from urllib.parse import urlparse
 
 # PyInstaller Fix: nicegui assets
 if getattr(sys, 'frozen', False):
@@ -71,7 +74,6 @@ class AppUI:
         self._load_more_btn = None
         self._load_more_in_progress = False
         self._session_skipped = 0
-        self._session_ok = 0
         self._session_replaced = 0
 
         # UI Elements
@@ -79,7 +81,6 @@ class AppUI:
         self.status_stats_row = None
         self.status_remaining = None
         self.status_skipped = None
-        self.status_ok = None
         self.status_replaced = None
         self.provider_slot = None
         self.search_bar_slot = None
@@ -122,7 +123,6 @@ class AppUI:
                 self.status_label_idle.set_text("Ready to start...")
             return
         self._session_skipped = 0
-        self._session_ok = 0
         self._session_replaced = 0
         await self.next_card()
 
@@ -341,8 +341,29 @@ class AppUI:
                 notify(f"Could not tag card in Anki: {e}", type='negative')
                 return
             if term:
-                self._session_ok += 1
+                self._session_replaced += 1
                 notify(f"Marked OK: '{term}'", type='positive')
+            await self.next_card()
+        finally:
+            self._is_navigating = False
+
+    async def unset_image(self):
+        if self._is_navigating:
+            return
+        self._is_navigating = True
+        try:
+            try:
+                term = await self.logic.unset_image()
+            except ActionError as e:
+                notify(str(e), type='negative')
+                return
+            except AnkiConnectError as e:
+                logger.error("Unset image failed (Anki): %s", e)
+                notify(f"Could not update card in Anki: {e}", type='negative')
+                return
+            if term:
+                self._session_replaced += 1
+                notify(f"Unset image for '{term}'", type='positive')
             await self.next_card()
         finally:
             self._is_navigating = False
@@ -412,7 +433,7 @@ class AppUI:
         if self.status_stats_row:
             self.status_stats_row.visible = False
 
-    def _set_status_processing(self, remaining, skipped, ok, replaced):
+    def _set_status_processing(self, remaining, skipped, replaced):
         if self.status_label_idle:
             self.status_label_idle.visible = False
         if self.status_stats_row:
@@ -421,8 +442,6 @@ class AppUI:
             self.status_remaining.set_text(f"{remaining} Remaining")
         if self.status_skipped:
             self.status_skipped.set_text(f"{skipped} Skipped")
-        if self.status_ok:
-            self.status_ok.set_text(f"{ok} OK")
         if self.status_replaced:
             self.status_replaced.set_text(f"{replaced} Replaced")
 
@@ -435,8 +454,6 @@ class AppUI:
             self.status_remaining.set_text("0 Remaining")
         if self.status_skipped:
             self.status_skipped.set_text(f"{self._session_skipped} Skipped")
-        if self.status_ok:
-            self.status_ok.set_text(f"{self._session_ok} OK")
         if self.status_replaced:
             self.status_replaced.set_text(f"{self._session_replaced} Replaced")
 
@@ -448,7 +465,7 @@ class AppUI:
             return
         remaining = self.logic.get_remaining_count()
         self._set_status_processing(
-            remaining, self._session_skipped, self._session_ok, self._session_replaced
+            remaining, self._session_skipped, self._session_replaced
         )
 
     @staticmethod
@@ -457,6 +474,29 @@ class AppUI:
             return ""
         s = re.sub(r"<[^>]+>", " ", html)
         return re.sub(r"\s+", " ", s).strip()
+
+    @staticmethod
+    def _is_valid_http_url(s: str) -> bool:
+        s = (s or "").strip()
+        if not s:
+            return False
+        p = urlparse(s)
+        return p.scheme in ("http", "https") and bool(p.netloc)
+
+    @classmethod
+    def _http_url_from_source_field(cls, raw: str) -> Optional[str]:
+        """If the field is a bare http(s) URL or a single anchor with http(s) href, return URL."""
+        s = (raw or "").strip()
+        if not s:
+            return None
+        if cls._is_valid_http_url(s):
+            return s
+        m = re.search(r'href\s*=\s*"([^"]+)"', s, re.I)
+        if not m:
+            m = re.search(r"href\s*=\s*'([^']+)'", s, re.I)
+        if m and cls._is_valid_http_url(m.group(1)):
+            return m.group(1).strip()
+        return None
 
     def refresh_ui_content(self):
         """Full main-area rebuild (new card): search bar, left panel, and results grid."""
@@ -520,8 +560,7 @@ class AppUI:
 
     def build_search_bar(self):
         """
-        Search centered (equal flex-1 spacers); OK and Skip right-aligned in the last third.
-        Same flex pattern as the header — avoids Tailwind arbitrary grid templates.
+        Unset (left), search (center), OK + Skip (right) on wide screens; stacked on narrow.
         """
 
         def on_search_change(e):
@@ -538,7 +577,11 @@ class AppUI:
             'w-full flex flex-col sm:flex-row sm:items-center gap-y-2 sm:gap-y-0 '
             'gap-x-3 mb-1 sm:mb-1.5'
         ):
-            ui.element('div').classes('sm:block flex-1 min-w-0')
+            with ui.element('div').classes(
+                'w-full sm:flex-1 min-w-0 flex justify-start items-center'
+            ):
+                ui.button("Unset image", on_click=self.unset_image) \
+                    .props('color=grey-5 flat icon=broken_image').classes('font-bold shrink-0')
             with ui.element('div').classes(
                 'w-full sm:w-auto sm:flex-none sm:min-w-0 flex justify-center'
             ):
@@ -593,6 +636,25 @@ class AppUI:
                         'text-slate-400 italic text-sm py-6 text-center border border-dashed '
                         'border-slate-200 rounded-lg w-full'
                     )
+
+                source_raw = fields.get(self.logic.field_source, {}).get('value', '')
+                if source_raw.strip():
+                    ui.separator().classes('opacity-60')
+                    self._left_panel_heading(self.logic.field_source)
+                    link_url = self._http_url_from_source_field(source_raw)
+                    if link_url:
+                        link_label = self._strip_html_to_plain(source_raw) or link_url
+                        ui.link(link_label, link_url, new_tab=True).classes(
+                            'text-sm text-blue-700 hover:underline break-all'
+                        )
+                    else:
+                        safe = html.escape(source_raw)
+                        ui.html(
+                            f'<div class="whitespace-pre-wrap break-words text-sm text-slate-700 '
+                            f'font-mono bg-slate-100/90 p-2 rounded-lg border border-slate-200/90">'
+                            f'{safe}</div>',
+                            sanitize=False,
+                        )
 
                 for label, key in (
                     ('Notes', 'Notes'),
@@ -802,11 +864,6 @@ async def index_page():
                     app_ui.status_skipped = ui.label("").classes(
                         'text-sm sm:text-base font-semibold tabular-nums '
                         'text-[#d4a84b]'
-                    )
-                    ui.label("·").classes('text-slate-300 select-none')
-                    app_ui.status_ok = ui.label("").classes(
-                        'text-sm sm:text-base font-semibold tabular-nums '
-                        'text-[#6b9e7d]'
                     )
                     ui.label("·").classes('text-slate-300 select-none')
                     app_ui.status_replaced = ui.label("").classes(
