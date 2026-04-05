@@ -100,7 +100,7 @@ class CardManagerLogic:
         """
         logger.info(f"Scanning deck: {deck_name}")
         t = self.tag_auto_replaced
-        query = f'deck:"{deck_name}" -tag:{t}'
+        query = f'deck:"{deck_name}" -tag:{t} -tag:Finished'
         try:
             all_ids = await self.anki.find_notes(query)
         except AnkiConnectError as e:
