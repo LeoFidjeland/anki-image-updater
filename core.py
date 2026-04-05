@@ -60,7 +60,8 @@ class CardManagerLogic:
         Then pre-filters in Python. This avoids per-card HTTP round-trips on startup.
         """
         logger.info(f"Scanning deck: {deck_name}")
-        query = f'deck:"{deck_name}" -tag:{self.tag_auto_replaced}::Skipped'
+        t = self.tag_auto_replaced
+        query = f'deck:"{deck_name}" -tag:{t}'
         try:
             all_ids = await self.anki.find_notes(query)
         except AnkiConnectError as e:
@@ -86,8 +87,8 @@ class CardManagerLogic:
                 skipped_wrong_model += 1
                 continue
             source_val = fields.get(self.field_source, {}).get('value', '').strip()
-            if source_val:
-                continue  # already has an image source
+            # if source_val:
+                # continue  # already has an image source
             raw_term = fields.get(self.field_term, {}).get('value', '')
             term = raw_term.split('<')[0].strip()
             if not term:
@@ -151,6 +152,18 @@ class CardManagerLogic:
         
         await self.anki.add_tags([note_id], f"{self.tag_auto_replaced}::Skipped")
         logger.info(f"Skipped '{term}'")
+        return term
+
+    async def ok_card(self):
+        """Adds OK tag to the current note (image accepted as-is, no replacement)."""
+        if not self.current_note:
+            return
+
+        note_id = self.current_note['noteId']
+        term = self.current_term
+
+        await self.anki.add_tags([note_id], f"{self.tag_auto_replaced}::OK")
+        logger.info(f"Marked OK '{term}'")
         return term
 
     async def apply_image_to_card(self, img_data, *, note=None, term=None):

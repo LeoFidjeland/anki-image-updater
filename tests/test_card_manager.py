@@ -29,7 +29,9 @@ async def test_card_manager_load_deck_no_cards(card_logic_manager):
     
     success, msg = await card_logic_manager.load_deck("Test Deck")
     
-    card_logic_manager.anki.find_notes.assert_called_once_with('deck:"Test Deck" -tag:Replaced::Skipped')
+    card_logic_manager.anki.find_notes.assert_called_once_with(
+        'deck:"Test Deck" -tag:Replaced'
+    )
     
     assert not success
     assert "No cards found" in msg
@@ -89,6 +91,23 @@ async def test_card_manager_skip_card(card_logic_manager):
     
     card_logic_manager.anki.add_tags.assert_awaited_once_with([999], "Replaced::Skipped")
     assert term == "TestTerm"
+
+
+@pytest.mark.asyncio
+async def test_card_manager_ok_card(card_logic_manager):
+    """Test that OK adds the tag and returns the term."""
+    card_logic_manager.current_note = {"noteId": 999}
+    card_logic_manager.current_term = "TestTerm"
+    card_logic_manager.note_ids = [999]
+    card_logic_manager.current_index = 0
+
+    card_logic_manager.anki.add_tags = AsyncMock(return_value=None)
+
+    term = await card_logic_manager.ok_card()
+
+    card_logic_manager.anki.add_tags.assert_awaited_once_with([999], "Replaced::OK")
+    assert term == "TestTerm"
+
 
 @pytest.mark.asyncio
 async def test_card_manager_apply_image_to_card(card_logic_manager, monkeypatch):

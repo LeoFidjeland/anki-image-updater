@@ -71,6 +71,7 @@ class AppUI:
         self._load_more_btn = None
         self._load_more_in_progress = False
         self._session_skipped = 0
+        self._session_ok = 0
         self._session_replaced = 0
 
         # UI Elements
@@ -78,6 +79,7 @@ class AppUI:
         self.status_stats_row = None
         self.status_remaining = None
         self.status_skipped = None
+        self.status_ok = None
         self.status_replaced = None
         self.provider_slot = None
         self.search_bar_slot = None
@@ -120,6 +122,7 @@ class AppUI:
                 self.status_label_idle.set_text("Ready to start...")
             return
         self._session_skipped = 0
+        self._session_ok = 0
         self._session_replaced = 0
         await self.next_card()
 
@@ -326,6 +329,24 @@ class AppUI:
         finally:
             self._is_navigating = False
 
+    async def ok_card(self):
+        if self._is_navigating:
+            return
+        self._is_navigating = True
+        try:
+            try:
+                term = await self.logic.ok_card()
+            except AnkiConnectError as e:
+                logger.error("OK card failed (Anki): %s", e)
+                notify(f"Could not tag card in Anki: {e}", type='negative')
+                return
+            if term:
+                self._session_ok += 1
+                notify(f"Marked OK: '{term}'", type='positive')
+            await self.next_card()
+        finally:
+            self._is_navigating = False
+
     def build_settings_dialog(self):
         cfg = self.logic.config
         with ui.dialog() as settings_dialog, ui.card().classes('w-full max-w-lg'):
@@ -391,7 +412,7 @@ class AppUI:
         if self.status_stats_row:
             self.status_stats_row.visible = False
 
-    def _set_status_processing(self, remaining, skipped, replaced):
+    def _set_status_processing(self, remaining, skipped, ok, replaced):
         if self.status_label_idle:
             self.status_label_idle.visible = False
         if self.status_stats_row:
@@ -400,6 +421,8 @@ class AppUI:
             self.status_remaining.set_text(f"{remaining} Remaining")
         if self.status_skipped:
             self.status_skipped.set_text(f"{skipped} Skipped")
+        if self.status_ok:
+            self.status_ok.set_text(f"{ok} OK")
         if self.status_replaced:
             self.status_replaced.set_text(f"{replaced} Replaced")
 
@@ -412,6 +435,8 @@ class AppUI:
             self.status_remaining.set_text("0 Remaining")
         if self.status_skipped:
             self.status_skipped.set_text(f"{self._session_skipped} Skipped")
+        if self.status_ok:
+            self.status_ok.set_text(f"{self._session_ok} OK")
         if self.status_replaced:
             self.status_replaced.set_text(f"{self._session_replaced} Replaced")
 
@@ -423,7 +448,7 @@ class AppUI:
             return
         remaining = self.logic.get_remaining_count()
         self._set_status_processing(
-            remaining, self._session_skipped, self._session_replaced
+            remaining, self._session_skipped, self._session_ok, self._session_replaced
         )
 
     @staticmethod
@@ -495,7 +520,7 @@ class AppUI:
 
     def build_search_bar(self):
         """
-        Search centered (equal flex-1 spacers); Skip right-aligned in the last third.
+        Search centered (equal flex-1 spacers); OK and Skip right-aligned in the last third.
         Same flex pattern as the header — avoids Tailwind arbitrary grid templates.
         """
 
@@ -523,10 +548,13 @@ class AppUI:
                         'w-full min-w-0 max-w-xl sm:w-96 md:max-w-2xl'
                     )
             with ui.element('div').classes(
-                'w-full sm:flex-1 min-w-0 flex justify-end items-center'
+                'w-full sm:flex-1 min-w-0 flex justify-end items-center gap-2'
             ):
-                ui.button("Skip Card", on_click=self.skip_card) \
-                    .props('color=grey-5 flat icon=skip_next').classes('font-bold shrink-0')
+                with ui.row().classes('gap-2 items-center shrink-0'):
+                    ui.button("OK", on_click=self.ok_card) \
+                        .props('color=grey-5 flat icon=check_box').classes('font-bold shrink-0')
+                    ui.button("Skip Card", on_click=self.skip_card) \
+                        .props('color=grey-5 flat icon=skip_next').classes('font-bold shrink-0')
 
     def build_left_panel(self):
         with ui.card().classes(
@@ -774,6 +802,11 @@ async def index_page():
                     app_ui.status_skipped = ui.label("").classes(
                         'text-sm sm:text-base font-semibold tabular-nums '
                         'text-[#d4a84b]'
+                    )
+                    ui.label("·").classes('text-slate-300 select-none')
+                    app_ui.status_ok = ui.label("").classes(
+                        'text-sm sm:text-base font-semibold tabular-nums '
+                        'text-[#6b9e7d]'
                     )
                     ui.label("·").classes('text-slate-300 select-none')
                     app_ui.status_replaced = ui.label("").classes(
