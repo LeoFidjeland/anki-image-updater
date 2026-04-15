@@ -142,6 +142,7 @@ class CardManagerLogic:
         if not self.valid_notes:
             return False, f"No cards needing images in '{deck_name}'"
 
+        self.valid_notes.sort(key=lambda n: n['noteId'])
         self.current_index = -1
         logger.info(f"{len(self.valid_notes)} cards need images.")
         return True, f"Found {len(self.valid_notes)} cards to process."
