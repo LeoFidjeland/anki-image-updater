@@ -13,8 +13,8 @@ dist/
 dist-bin/
 .icon-build.iconset/
 
-# Windows launcher embeds PyApp at build time (do not commit the binary)
-packaging/windows/launcher/Embedded/
+# Windows Rust launcher embeds PyApp at build time (do not commit the binary)
+packaging/windows/launcher-rust/assets/AnkiImageUpdaterPyApp.exe
 
 # Mac
 .DS_Store

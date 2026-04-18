@@ -7,7 +7,7 @@
 #
 # Output:
 #   macOS: dist-bin/AnkiImageUpdater-<arch>.zip containing Anki Image Updater.app
-#   Windows (Git Bash): dist-bin/AnkiImageUpdater-windows-x64.exe (single self-contained launcher; embeds PyApp)
+#   Windows (Git Bash): dist-bin/AnkiImageUpdater-windows-x64.exe (Rust + egui launcher; embeds PyApp; no .NET)
 #   Linux: dist-bin/bin/AnkiImageUpdater-linux-<arch> (raw PyApp binary only)
 
 set -euo pipefail
@@ -62,23 +62,17 @@ esac
 if [[ "$uname_s" == MINGW* || "$uname_s" == MSYS* || "$uname_s" == CYGWIN* ]]; then
     echo ">> Renaming PyApp payload"
     mv dist-bin/bin/pyapp.exe dist-bin/bin/AnkiImageUpdaterPyApp.exe
-    echo ">> Publishing single-file WinForms launcher (.NET 8; requires dotnet SDK 8+)"
-    emb="packaging/windows/launcher/Embedded"
-    mkdir -p "$emb"
-    cp dist-bin/bin/AnkiImageUpdaterPyApp.exe "$emb/"
-    pub="dist-bin/winpublish"
-    rm -rf "$pub"
-    dotnet publish packaging/windows/launcher/AnkiImageUpdater.Launcher.csproj \
-        -c Release -o "$pub" \
-        -p:PublishProfile=WinX64SelfContained \
-        -p:SelfContained=true
+    echo ">> Building Rust + egui launcher (requires Rust stable + MSVC)"
+    assets="packaging/windows/launcher-rust/assets"
+    mkdir -p "$assets"
+    cp dist-bin/bin/AnkiImageUpdaterPyApp.exe "$assets/"
+    (cd packaging/windows/launcher-rust && cargo build --release)
     out_exe="dist-bin/AnkiImageUpdater-windows-x64.exe"
-    cp "$pub/AnkiImageUpdater.exe" "$out_exe"
-    # .NET 8 RID-only publish defaults to FDD (~9 MB). Self-contained + PyApp should be much larger.
+    cp packaging/windows/launcher-rust/target/release/AnkiImageUpdater.exe "$out_exe"
     sz=$(wc -c <"$out_exe" | tr -d ' ')
-    min=$((35 * 1024 * 1024))
+    min=$((3 * 1024 * 1024))
     if [ "$sz" -lt "$min" ]; then
-        echo ">> ERROR: $out_exe is only $sz bytes (expected >= $min). Publish is probably framework-dependent — use PublishProfile=WinX64SelfContained." >&2
+        echo ">> ERROR: $out_exe is only $sz bytes (expected >= $min with embedded PyApp)." >&2
         exit 1
     fi
     echo ">> Done. Optional: rcedit \"$out_exe\" --set-icon packaging/windows/AppIcon.ico"
