@@ -70,12 +70,17 @@ if [[ "$uname_s" == MINGW* || "$uname_s" == MSYS* || "$uname_s" == CYGWIN* ]]; t
     rm -rf "$pub"
     dotnet publish packaging/windows/launcher/AnkiImageUpdater.Launcher.csproj \
         -c Release -o "$pub" \
-        -r win-x64 --self-contained true \
-        -p:PublishSingleFile=true \
-        -p:IncludeNativeLibrariesForSelfExtract=true \
-        -p:EnableCompressionInSingleFile=true
+        -p:PublishProfile=WinX64SelfContained \
+        -p:SelfContained=true
     out_exe="dist-bin/AnkiImageUpdater-windows-x64.exe"
     cp "$pub/AnkiImageUpdater.exe" "$out_exe"
+    # .NET 8 RID-only publish defaults to FDD (~9 MB). Self-contained + PyApp should be much larger.
+    sz=$(wc -c <"$out_exe" | tr -d ' ')
+    min=$((35 * 1024 * 1024))
+    if [ "$sz" -lt "$min" ]; then
+        echo ">> ERROR: $out_exe is only $sz bytes (expected >= $min). Publish is probably framework-dependent — use PublishProfile=WinX64SelfContained." >&2
+        exit 1
+    fi
     echo ">> Done. Optional: rcedit \"$out_exe\" --set-icon packaging/windows/AppIcon.ico"
     ls -lh "$out_exe"
 elif [[ "$uname_s" == "Darwin" ]]; then

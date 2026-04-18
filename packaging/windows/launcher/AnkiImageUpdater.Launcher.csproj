@@ -9,12 +9,8 @@
     <AssemblyName>AnkiImageUpdater</AssemblyName>
     <ApplicationIcon>..\AppIcon.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <!-- Single-file publish (CI / Release): self-contained win-x64, PyApp embedded as resource. -->
-    <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Self-contained single-file settings live in Properties/PublishProfiles/WinX64SelfContained.pubxml
+         so `dotnet publish` is not forced framework-dependent by .NET 8's RID defaults. -->
   </PropertyGroup>
 
   <!-- PyApp binary is copied to Embedded/ immediately before `dotnet publish` (see CI / build_binary.sh). -->
