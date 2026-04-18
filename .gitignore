@@ -13,6 +13,9 @@ dist/
 dist-bin/
 .icon-build.iconset/
 
+# Windows launcher embeds PyApp at build time (do not commit the binary)
+packaging/windows/launcher/Embedded/
+
 # Mac
 .DS_Store
 

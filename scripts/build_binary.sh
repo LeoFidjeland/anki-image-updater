@@ -7,7 +7,8 @@
 #
 # Output:
 #   macOS: dist-bin/AnkiImageUpdater-<arch>.zip containing Anki Image Updater.app
-#   other: dist-bin/bin/AnkiImageUpdater-<os>-<arch>[.exe]
+#   Windows (Git Bash): dist-bin/AnkiImageUpdater-windows-x64.exe (single self-contained launcher; embeds PyApp)
+#   Linux: dist-bin/bin/AnkiImageUpdater-linux-<arch> (raw PyApp binary only)
 
 set -euo pipefail
 
@@ -58,14 +59,28 @@ case "$uname_s" in
         ;;
 esac
 
-src="dist-bin/bin/pyapp$suffix"
-dst="dist-bin/bin/AnkiImageUpdater-$os_arch$suffix"
-mv "$src" "$dst"
-
-if [[ "$uname_s" == "Darwin" ]]; then
+if [[ "$uname_s" == MINGW* || "$uname_s" == MSYS* || "$uname_s" == CYGWIN* ]]; then
+    echo ">> Renaming PyApp payload"
+    mv dist-bin/bin/pyapp.exe dist-bin/bin/AnkiImageUpdaterPyApp.exe
+    echo ">> Publishing single-file WinForms launcher (.NET 8; requires dotnet SDK 8+)"
+    emb="packaging/windows/launcher/Embedded"
+    mkdir -p "$emb"
+    cp dist-bin/bin/AnkiImageUpdaterPyApp.exe "$emb/"
+    pub="dist-bin/winpublish"
+    rm -rf "$pub"
+    dotnet publish packaging/windows/launcher/AnkiImageUpdater.Launcher.csproj -c Release -o "$pub"
+    out_exe="dist-bin/AnkiImageUpdater-windows-x64.exe"
+    cp "$pub/AnkiImageUpdater.exe" "$out_exe"
+    echo ">> Done. Optional: rcedit \"$out_exe\" --set-icon packaging/windows/AppIcon.ico"
+    ls -lh "$out_exe"
+elif [[ "$uname_s" == "Darwin" ]]; then
+    dst="dist-bin/bin/AnkiImageUpdater-$os_arch"
+    mv dist-bin/bin/pyapp "$dst"
     echo ">> Packaging macOS .app"
     ./scripts/package_macos_app.sh "$dst" "dist-bin/AnkiImageUpdater-$os_arch.zip"
 else
+    dst="dist-bin/bin/AnkiImageUpdater-$os_arch$suffix"
+    mv dist-bin/bin/pyapp$suffix "$dst"
     echo ">> Done."
     ls -lh "$dst"
 fi
