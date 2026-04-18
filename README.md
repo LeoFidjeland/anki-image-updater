@@ -81,5 +81,5 @@ Output lands at `dist-bin/bin/AnkiImageUpdater-<os>-<arch>[.exe]`. The build doe
 ### Release a new version
 
 1. Bump `version` in [`pyproject.toml`](./pyproject.toml).
-2. Commit and tag: `git tag v0.2.0 && git push --tags`.
+2. Commit and tag: `git tag v1.0.0 && git push --tags`.
 3. GitHub Actions builds macOS and Windows binaries and attaches them to the release.
