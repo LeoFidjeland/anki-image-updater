@@ -2,13 +2,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from search_providers import ImageSearcher
 
-def test_integration_pexels(real_config):
-    """Real integration test for Pexels search."""
-    api_key = real_config.get("PEXELS_API_KEY")
-    if not api_key:
-        pytest.skip("Pexels API key not found in real config. Skipping integration test.")
-
-
 @pytest.mark.asyncio
 async def test_integration_pexels_async(real_config):
     """Real async integration test for Pexels search."""
