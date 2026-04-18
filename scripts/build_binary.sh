@@ -23,6 +23,14 @@ uv build --wheel
 wheel=$(ls dist/anki_image_updater-*-py3-none-any.whl | head -n1)
 echo ">> Wheel: $wheel"
 
+# Determine OS early so Windows MSVC can static-link the C runtime (no VCRUNTIME140.dll).
+uname_s="$(uname -s)"
+uname_m="$(uname -m)"
+if [[ "$uname_s" == MINGW* || "$uname_s" == MSYS* || "$uname_s" == CYGWIN* ]]; then
+  export RUSTFLAGS="-C target-feature=+crt-static"
+  echo ">> Windows: RUSTFLAGS=$RUSTFLAGS (static MSVC runtime for PyApp + launcher)"
+fi
+
 echo ">> Building PyApp bootstrapper"
 export PYAPP_PROJECT_PATH="$(pwd)/$wheel"
 export PYAPP_EXEC_SPEC="anki_image_updater:start_app"
@@ -33,9 +41,7 @@ export PYAPP_PIP_EXTERNAL="true"
 
 cargo install pyapp --force --root dist-bin
 
-# Determine final binary name based on OS / arch.
-uname_s="$(uname -s)"
-uname_m="$(uname -m)"
+# Final binary name / arch label
 case "$uname_s" in
     Darwin)
         suffix=""

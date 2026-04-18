@@ -19,11 +19,16 @@ jobs:
           # Apple Silicon (M1/M2/M3/…). `macos-latest` is ARM64 on current images.
           - os: macos-latest
             asset_suffix: macos-arm64
+            rustflags: ""
           # Intel Mac (x86_64). Use GitHub’s `macos-15-intel` image (see actions/runner-images).
           - os: macos-15-intel
             asset_suffix: macos-intel
+            rustflags: ""
           - os: windows-latest
             asset_suffix: windows-x64
+            # `cargo install pyapp` does not reliably pick up repo `.cargo/config.toml`; set explicitly
+            # so PyApp.exe does not require VCRUNTIME140.dll on end-user machines.
+            rustflags: "-C target-feature=+crt-static"
     runs-on: ${{ matrix.os }}
 
     env:
@@ -31,6 +36,7 @@ jobs:
       PYAPP_PYTHON_VERSION: "3.12"
       PYAPP_FULL_ISOLATION: "true"
       PYAPP_PIP_EXTERNAL: "true"
+      RUSTFLAGS: ${{ matrix.rustflags }}
 
     steps:
       - name: Checkout
