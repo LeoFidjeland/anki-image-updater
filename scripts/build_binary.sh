@@ -5,7 +5,9 @@
 #   - uv  (https://docs.astral.sh/uv/)
 #   - cargo / rustc  (e.g. `brew install rust` on macOS)
 #
-# Output: dist-bin/bin/AnkiImageUpdater[.exe]
+# Output:
+#   macOS: dist-bin/AnkiImageUpdater-<arch>.zip containing Anki Image Updater.app
+#   other: dist-bin/bin/AnkiImageUpdater-<os>-<arch>[.exe]
 
 set -euo pipefail
 
@@ -60,5 +62,10 @@ src="dist-bin/bin/pyapp$suffix"
 dst="dist-bin/bin/AnkiImageUpdater-$os_arch$suffix"
 mv "$src" "$dst"
 
-echo ">> Done."
-ls -lh "$dst"
+if [[ "$uname_s" == "Darwin" ]]; then
+    echo ">> Packaging macOS .app"
+    ./scripts/package_macos_app.sh "$dst" "dist-bin/AnkiImageUpdater-$os_arch.zip"
+else
+    echo ">> Done."
+    ls -lh "$dst"
+fi

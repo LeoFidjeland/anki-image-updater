@@ -11,6 +11,7 @@ uv.lock
 build/
 dist/
 dist-bin/
+.icon-build.iconset/
 
 # Mac
 .DS_Store

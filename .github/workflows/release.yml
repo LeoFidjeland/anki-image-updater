@@ -64,7 +64,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.github/workflows/release.yml') }}
+          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'packaging/macos/Info.plist.in', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png') }}
           restore-keys: ${{ runner.os }}-cargo-pyapp-
 
       - name: Build PyApp bootstrapper
@@ -77,6 +77,17 @@ jobs:
           dst="dist-bin/bin/AnkiImageUpdater-${{ matrix.asset_suffix }}${{ matrix.exe_suffix }}"
           mv "$src" "$dst"
           echo "ASSET_PATH=$dst" >> "$GITHUB_ENV"
+
+      # Ship a real .app bundle (double-click works like other Mac apps). The zip expands to
+      # "Anki Image Updater.app" — drag it to Applications or run in place.
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          "$GITHUB_WORKSPACE/scripts/package_macos_app.sh" \
+            "$GITHUB_WORKSPACE/dist-bin/bin/AnkiImageUpdater-${{ matrix.asset_suffix }}" \
+            "$GITHUB_WORKSPACE/dist-bin/AnkiImageUpdater-${{ matrix.asset_suffix }}.zip"
+          echo "ASSET_PATH=$GITHUB_WORKSPACE/dist-bin/AnkiImageUpdater-${{ matrix.asset_suffix }}.zip" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
