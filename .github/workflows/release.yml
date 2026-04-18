@@ -16,8 +16,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Apple Silicon (M1/M2/M3/…). `macos-latest` is ARM64 on current images.
           - os: macos-latest
             asset_suffix: macos-arm64
+            exe_suffix: ""
+          # Intel Mac (x86_64). Use GitHub’s `macos-15-intel` image (see actions/runner-images).
+          - os: macos-15-intel
+            asset_suffix: macos-intel
             exe_suffix: ""
           - os: windows-latest
             asset_suffix: windows-x64

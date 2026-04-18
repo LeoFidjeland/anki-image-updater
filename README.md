@@ -15,7 +15,8 @@ A graphical tool to help you find and update images for your Anki cards using Pe
 ## Install (for end users)
 
 1. Download the file for your operating system from the [latest release](https://github.com/LeoFidjeland/anki-image-updater/releases/latest):
-    - **macOS (Apple Silicon)**: `AnkiImageUpdater-macos-arm64`
+    - **macOS (Apple Silicon, M1/M2/M3/…)**: `AnkiImageUpdater-macos-arm64`
+    - **macOS (Intel)**: `AnkiImageUpdater-macos-intel`
     - **Windows (64-bit)**: `AnkiImageUpdater-windows-x64.exe`
 2. Make sure Anki is running.
 3. Double-click the downloaded file.
@@ -30,7 +31,7 @@ The binaries are not code-signed (yet), so your OS will warn you the first time:
 
 **macOS**: Finder will say *"cannot be opened because it is from an unidentified developer"*.
 - Right-click (or Ctrl-click) the file → **Open** → **Open** in the dialog. You only need to do this once.
-- Alternatively, from Terminal: `xattr -d com.apple.quarantine ~/Downloads/AnkiImageUpdater-macos-arm64`, then double-click normally.
+- Alternatively, from Terminal: `xattr -d com.apple.quarantine ~/Downloads/AnkiImageUpdater-macos-arm64` (or `…-macos-intel` on Intel Macs), then double-click normally.
 
 **Windows**: SmartScreen will say *"Windows protected your PC"*.
 - Click **More info** → **Run anyway**.
