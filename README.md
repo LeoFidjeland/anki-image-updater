@@ -87,21 +87,29 @@ Requires [`uv`](https://docs.astral.sh/uv/) plus a Rust toolchain (`brew install
 
 On **macOS** this also produces `dist-bin/AnkiImageUpdater-<arch>.zip`, which contains **`Anki Image Updater.app`**. The app bundle is built by [`scripts/package_macos_app.sh`](scripts/package_macos_app.sh): a thin **Swift** launcher ([`packaging/macos/launcher/main.swift`](packaging/macos/launcher/main.swift)) provides a preparation window, then runs the **PyApp** binary as `Contents/MacOS/AnkiImageUpdaterPyApp`. The bundle is **ad hoc signed** (`codesign -s -`) before zipping.
 
-On **Windows** the output is `dist-bin/bin/AnkiImageUpdater-windows-x64.exe`.
+On **Windows** the output is `dist-bin/bin/AnkiImageUpdater-windows-x64.exe`. CI embeds **`packaging/windows/AppIcon.ico`** into that `.exe` with [rcedit](https://github.com/electron/rcedit) so Explorer shows the same artwork as on macOS.
 
 The build runs `uv build --wheel`, then `cargo install pyapp` to embed that wheel in a small Rust bootstrapper. On first launch, PyApp downloads [python-build-standalone](https://github.com/astral-sh/python-build-standalone) (the same family of runtimes `uv` uses), creates a per-app virtual environment, and runs the entry point.
 
-### macOS app icon
+### App icons (macOS + Windows)
 
-Source artwork lives at **`packaging/macos/anki-image-updater-icon.png`** (square PNG). The bundled icon is **`packaging/macos/AppIcon.icns`**, which [`scripts/package_macos_app.sh`](scripts/package_macos_app.sh) copies into the `.app` when present.
+Source artwork lives at **`packaging/macos/anki-image-updater-icon.png`** (square PNG).
 
-After editing the PNG, regenerate the `.icns` on a Mac:
+**macOS:** regenerate **`packaging/macos/AppIcon.icns`** on a Mac (then commit it):
 
 ```bash
 ./scripts/generate_macos_icon.sh
 ```
 
-You can pass another PNG path as the first argument. Commit both the `.png` and the updated `.icns` when the icon changes.
+You can pass another PNG path as the first argument.
+
+**Windows:** regenerate **`packaging/windows/AppIcon.ico`** (then commit it):
+
+```bash
+uv run --with pillow python scripts/generate_windows_icon.py
+```
+
+When the PNG changes, run **both** generators and commit the updated `.icns`, `.ico`, and `.png`.
 
 ### Release a new version
 

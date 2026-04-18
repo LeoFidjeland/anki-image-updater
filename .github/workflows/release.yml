@@ -64,7 +64,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'packaging/macos/Info.plist.in', 'packaging/macos/launcher/main.swift', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png') }}
+          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'scripts/generate_windows_icon.py', 'packaging/macos/Info.plist.in', 'packaging/macos/launcher/main.swift', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png', 'packaging/windows/AppIcon.ico') }}
           restore-keys: ${{ runner.os }}-cargo-pyapp-
 
       - name: Build PyApp bootstrapper
@@ -77,6 +77,19 @@ jobs:
           dst="dist-bin/bin/AnkiImageUpdater-${{ matrix.asset_suffix }}${{ matrix.exe_suffix }}"
           mv "$src" "$dst"
           echo "ASSET_PATH=$dst" >> "$GITHUB_ENV"
+
+      - name: Embed Windows icon
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RCEDIT_URL: https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe
+        run: |
+          $ico = Join-Path $env:GITHUB_WORKSPACE "packaging/windows/AppIcon.ico"
+          if (-not (Test-Path $ico)) { throw "Missing $ico — commit it or run: uv run --with pillow python scripts/generate_windows_icon.py" }
+          $rcedit = Join-Path $env:RUNNER_TEMP "rcedit-x64.exe"
+          Invoke-WebRequest -Uri $env:RCEDIT_URL -OutFile $rcedit -UseBasicParsing
+          $exe = Join-Path $env:GITHUB_WORKSPACE "dist-bin/bin/AnkiImageUpdater-windows-x64.exe"
+          & $rcedit $exe --set-icon $ico
 
       # Ship a real .app bundle (double-click works like other Mac apps). The zip expands to
       # "Anki Image Updater.app" — drag it to Applications or run in place.
