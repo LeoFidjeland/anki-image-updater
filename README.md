@@ -19,7 +19,7 @@ A graphical tool to help you find and update images for your Anki cards using Pe
     - **macOS (Intel)**: `AnkiImageUpdater-macos-intel.zip`
     - **Windows (64-bit)**: `AnkiImageUpdater-windows-x64.exe`
 2. **macOS**: Unzip the download. You get **`Anki Image Updater.app`** — a normal Mac application. Drag it to **Applications** (optional), then open it from Finder like any other app.
-3. **Windows**: Run **`AnkiImageUpdater-windows-x64.exe`** (double-click or place it anywhere you like). The download is one file; on first launch it unpacks the Python runtime bootstrapper under `%LOCALAPPDATA%\anki-image-updater\pyapp\`. The file is larger than a typical small app because it includes a **self-contained .NET 8** runtime plus the embedded payload.
+3. **Windows**: Run **`AnkiImageUpdater-windows-x64.exe`** (double-click or place it anywhere you like). The download is one file; on first launch it unpacks the Python runtime bootstrapper under `%LOCALAPPDATA%\anki-image-updater\pyapp\`. The file is **much larger than a normal tiny utility** (on the order of **tens of MB**) because it bundles a **self-contained .NET 8** runtime plus the embedded PyApp payload. If your download is only ~9 MB, it is not a complete build — use a newer release or rebuild with [`scripts/build_binary.sh`](scripts/build_binary.sh).
 4. Make sure Anki is running.
 
 ### First launch takes a little while
@@ -67,6 +67,7 @@ Delete the app (and the downloaded zip / installer) and the runtime cache:
 - **App doesn't connect to Anki**: Ensure Anki is running and AnkiConnect is configured to allow `localhost`.
 - **Browser doesn't open**: Navigate manually to `http://localhost:8080`.
 - **Windows: “This app can’t run on your PC”**: You need **64-bit Windows** and a build marked **x64**. Re-download the release asset if the file was truncated. Antivirus quarantine can also block self-extracting single-file apps — check Windows Security → Protection history.
+- **Windows: exits immediately, `echo %ERRORLEVEL%` shows a large negative number (e.g. `-2147450721`), no folder under `%LOCALAPPDATA%\anki-image-updater\pyapp\`**: The `.exe` never got to the PyApp bootstrap. A **~9 MB** file means a **framework-dependent** or broken publish (not a full self-contained bundle). Official builds should be **much larger**; install **[.NET 8 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/8.0)** only as a temporary workaround for an old bad asset, then **re-download** the fixed release. **GUI apps do not print to `cmd`** — use Task Manager, Event Viewer, or run `%LOCALAPPDATA%\anki-image-updater\pyapp\AnkiImageUpdaterPyApp.exe` after a successful launch to see console output.
 - **Log file location**:
   - macOS: `~/Library/Logs/anki-image-updater/anki_image_updater.log`
   - Windows: `%LOCALAPPDATA%\LeoFidjeland\anki-image-updater\Logs\anki_image_updater.log`

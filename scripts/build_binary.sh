@@ -68,7 +68,12 @@ if [[ "$uname_s" == MINGW* || "$uname_s" == MSYS* || "$uname_s" == CYGWIN* ]]; t
     cp dist-bin/bin/AnkiImageUpdaterPyApp.exe "$emb/"
     pub="dist-bin/winpublish"
     rm -rf "$pub"
-    dotnet publish packaging/windows/launcher/AnkiImageUpdater.Launcher.csproj -c Release -o "$pub"
+    dotnet publish packaging/windows/launcher/AnkiImageUpdater.Launcher.csproj \
+        -c Release -o "$pub" \
+        -r win-x64 --self-contained true \
+        -p:PublishSingleFile=true \
+        -p:IncludeNativeLibrariesForSelfExtract=true \
+        -p:EnableCompressionInSingleFile=true
     out_exe="dist-bin/AnkiImageUpdater-windows-x64.exe"
     cp "$pub/AnkiImageUpdater.exe" "$out_exe"
     echo ">> Done. Optional: rcedit \"$out_exe\" --set-icon packaging/windows/AppIcon.ico"

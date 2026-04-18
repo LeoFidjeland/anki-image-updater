@@ -112,9 +112,22 @@ jobs:
           Copy-Item (Join-Path $env:GITHUB_WORKSPACE "dist-bin/bin/AnkiImageUpdaterPyApp.exe") (Join-Path $emb "AnkiImageUpdaterPyApp.exe") -Force
           $pub = Join-Path $env:GITHUB_WORKSPACE "dist-bin/winpublish"
           if (Test-Path $pub) { Remove-Item $pub -Recurse -Force }
-          dotnet publish (Join-Path $env:GITHUB_WORKSPACE "packaging/windows/launcher/AnkiImageUpdater.Launcher.csproj") -c Release -o $pub
+          # Must pass -r and --self-contained on the CLI: SDK can publish a tiny FDD apphost (~9 MB)
+          # if RID/self-contained are only in the .csproj, which then fails at runtime with host errors
+          # (e.g. -2147450721 / 0x8000808x) before PyApp materializes.
+          dotnet publish (Join-Path $env:GITHUB_WORKSPACE "packaging/windows/launcher/AnkiImageUpdater.Launcher.csproj") `
+            -c Release -o $pub `
+            -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true
           $exe = Join-Path $env:GITHUB_WORKSPACE "dist-bin/AnkiImageUpdater-windows-x64.exe"
           Copy-Item (Join-Path $pub "AnkiImageUpdater.exe") $exe -Force
+          $sz = (Get-Item $exe).Length
+          $min = 35MB
+          if ($sz -lt $min) {
+            throw "Published exe is only $sz bytes (expected at least ~$min for self-contained WinForms + embedded PyApp). Check dotnet publish self-contained output."
+          }
           $rcedit = Join-Path $env:RUNNER_TEMP "rcedit-x64.exe"
           Invoke-WebRequest -Uri $env:RCEDIT_URL -OutFile $rcedit -UseBasicParsing
           & $rcedit $exe --set-icon $ico
