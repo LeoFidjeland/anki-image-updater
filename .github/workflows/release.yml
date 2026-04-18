@@ -77,7 +77,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'scripts/generate_windows_icon.py', 'packaging/macos/Info.plist.in', 'packaging/macos/launcher/main.swift', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png', 'packaging/windows/AppIcon.ico', 'packaging/windows/launcher-rust/Cargo.toml', 'packaging/windows/launcher-rust/Cargo.lock', 'packaging/windows/launcher-rust/src/main.rs') }}
+          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.cargo/config.toml', '.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'scripts/generate_windows_icon.py', 'packaging/macos/Info.plist.in', 'packaging/macos/launcher/main.swift', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png', 'packaging/windows/AppIcon.ico', 'packaging/windows/launcher-rust/Cargo.toml', 'packaging/windows/launcher-rust/Cargo.lock', 'packaging/windows/launcher-rust/src/main.rs') }}
           restore-keys: ${{ runner.os }}-cargo-pyapp-
 
       - name: Build PyApp bootstrapper

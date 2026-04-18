@@ -1,0 +1,4 @@
+# Windows MSVC targets link VCRUNTIME140.dll dynamically by default; fresh VMs and
+# some Windows installs do not ship that. Static CRT keeps launchers self-contained.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
