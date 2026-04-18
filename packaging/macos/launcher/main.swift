@@ -100,6 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var forwarded = CommandLine.arguments
         if !forwarded.isEmpty { forwarded.removeFirst() }
         task.arguments = forwarded
+        // Finder-launched apps often have cwd "/". Use a writable directory for bootstrap temp files.
+        task.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
 
         childTask = task
 

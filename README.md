@@ -52,6 +52,12 @@ Delete the app (and the downloaded zip / installer) and the runtime cache:
 - **Windows**: `%LOCALAPPDATA%\pyapp\anki-image-updater`
 
 ## Troubleshooting
+- **Crashes or won’t start on a friend’s Mac (including macOS 15 / Sequoia)**: The OS version is rarely the cause by itself. Check these first:
+    - **CPU architecture**: Apple Silicon (M1/M2/…) needs **`AnkiImageUpdater-macos-arm64.zip`**. Intel Macs need **`AnkiImageUpdater-macos-intel.zip`**. The wrong one will fail immediately (often with *“bad CPU type”* if you run the inner binary from Terminal).
+    - **Gatekeeper / quarantine**: Still use **Open Anyway** in **System Settings → Privacy & Security**, or `xattr -cr` on the `.app`, then try again.
+    - **See the real error**: Open **Terminal** and run  
+      `"$HOME/Downloads/Anki Image Updater.app/Contents/MacOS/AnkiImageUpdaterPyApp"`  
+      (adjust the path). Copy anything printed there or send a **Crash Report** from **Console.app** → Crash Reports → *Anki Image Updater*.
 - **macOS says the app is “damaged”**: Usually still **Gatekeeper + quarantine**, not file corruption. Try **System Settings → Privacy & Security → Open Anyway**, or `xattr -cr "/path/to/Anki Image Updater.app"`, or right-click → **Open**. Diagnostics: `spctl --assess --verbose "/path/to/Anki Image Updater.app"`. The real PyApp payload is `Contents/MacOS/AnkiImageUpdaterPyApp` if you need to run it from Terminal for debugging.
 - **App doesn't connect to Anki**: Ensure Anki is running and AnkiConnect is configured to allow `localhost`.
 - **Browser doesn't open**: Navigate manually to `http://localhost:8080`.
