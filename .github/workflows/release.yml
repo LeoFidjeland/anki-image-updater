@@ -64,7 +64,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'packaging/macos/Info.plist.in', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png') }}
+          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'packaging/macos/Info.plist.in', 'packaging/macos/launcher/main.swift', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png') }}
           restore-keys: ${{ runner.os }}-cargo-pyapp-
 
       - name: Build PyApp bootstrapper

@@ -6,7 +6,7 @@
 #
 # Optional icon: place packaging/macos/AppIcon.icns in the repo (see README).
 #
-# Requires macOS (ditto, PlistBuddy).
+# Requires macOS: ditto, PlistBuddy, swiftc (Xcode CLT), codesign.
 
 set -euo pipefail
 # Avoid AppleDouble files (._*) in the zip when copying across filesystems.
@@ -47,7 +47,15 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 mkdir -p "$app/Contents/Resources"
 
-cp "$binary" "$app/Contents/MacOS/AnkiImageUpdater"
+# PyApp runtime (downloaded / built separately) — real payload.
+cp "$binary" "$app/Contents/MacOS/AnkiImageUpdaterPyApp"
+chmod +x "$app/Contents/MacOS/AnkiImageUpdaterPyApp"
+
+# Thin Swift launcher: progress UI while PyApp bootstraps, then hands off to NiceGUI in the browser.
+swiftc -O \
+    -framework AppKit \
+    -o "$app/Contents/MacOS/AnkiImageUpdater" \
+    "$repo_root/packaging/macos/launcher/main.swift"
 chmod +x "$app/Contents/MacOS/AnkiImageUpdater"
 
 sed "s/__VERSION__/${version}/g" "$repo_root/packaging/macos/Info.plist.in" > "$app/Contents/Info.plist"
@@ -57,6 +65,11 @@ if [[ -f "$icon_src" ]]; then
     cp "$icon_src" "$app/Contents/Resources/AppIcon.icns"
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$app/Contents/Info.plist"
 fi
+
+# Ad-hoc signing improves Gatekeeper messaging (often "unidentified developer" +
+# Privacy & Security → Open Anyway) vs. the misleading "app is damaged" dialog on
+# completely unsigned bundles. Not a substitute for Apple Developer ID + notarization.
+codesign --force --deep --sign - "$app"
 
 mkdir -p "$(dirname "$zip_out")"
 rm -f "$zip_out"
