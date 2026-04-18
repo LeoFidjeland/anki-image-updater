@@ -36,7 +36,38 @@ mod real {
         "/assets/AnkiImageUpdaterPyApp.exe"
     ));
 
+    /// Set `ANKI_IMAGE_UPDATER_LAUNCHER_DEBUG=1` and run the `.exe` from **cmd** or **PowerShell**
+    /// so `spawn` / I/O errors print here (release builds use the GUI subsystem and hide them otherwise).
+    fn launcher_debug_stderr() -> bool {
+        std::env::var_os("ANKI_IMAGE_UPDATER_LAUNCHER_DEBUG").is_some()
+    }
+
+    fn attach_console_for_debug() {
+        if !launcher_debug_stderr() {
+            return;
+        }
+        const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn AttachConsole(dw_process_id: u32) -> i32;
+            fn AllocConsole() -> i32;
+        }
+        unsafe {
+            if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+                let _ = AllocConsole();
+            }
+        }
+    }
+
+    fn eprintln_launcher_err(context: &str, e: &anyhow::Error) {
+        if launcher_debug_stderr() {
+            eprintln!("[anki-image-updater launcher] {context}\n{e:#}");
+        }
+    }
+
     pub fn run() -> eframe::Result<()> {
+        attach_console_for_debug();
+
         let pyapp_path;
         let payload_sha;
         match materialize_pyapp() {
@@ -45,6 +76,7 @@ mod real {
                 payload_sha = v.1;
             }
             Err(e) => {
+                eprintln_launcher_err("Could not prepare Anki Image Updater", &e);
                 let _ = msgbox::create(
                     "Anki Image Updater",
                     &format!("Could not prepare Anki Image Updater:\n{e}"),
@@ -55,6 +87,7 @@ mod real {
         }
 
         if let Err(e) = maybe_restore(&pyapp_path, &payload_sha) {
+            eprintln_launcher_err("Could not refresh the Python environment", &e);
             let _ = msgbox::create(
                 "Anki Image Updater",
                 &format!("Could not refresh the Python environment:\n{e}"),
@@ -66,6 +99,7 @@ mod real {
         let home = match user_profile_dir() {
             Ok(h) => h,
             Err(e) => {
+                eprintln_launcher_err("Could not resolve your profile folder", &e);
                 let _ = msgbox::create(
                     "Anki Image Updater",
                     &format!("Could not resolve your profile folder:\n{e}"),
@@ -78,6 +112,7 @@ mod real {
         let child = match spawn_pyapp_with_console(&pyapp_path, &home) {
             Ok(c) => c,
             Err(e) => {
+                eprintln_launcher_err("Could not start Anki Image Updater (spawn PyApp)", &e);
                 let _ = msgbox::create(
                     "Anki Image Updater",
                     &format!("Could not start Anki Image Updater:\n{e}"),
