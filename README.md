@@ -26,6 +26,8 @@ A graphical tool to help you find and update images for your Anki cards using Pe
 
 The **macOS** and **Windows** launchers both show a small **“Preparing the app…”** window with a progress bar while the runtime sets things up (downloading Python on first run, creating a virtual environment, installing dependencies). That window **hides by itself** once the UI is available at `http://localhost:8080`. Your browser should open automatically shortly after. Later launches are much faster.
 
+**Why deleting Application Support fixed a broken install:** The [PyApp](https://ofek.dev/pyapp/) runtime only runs the full bootstrap when its **install directory does not exist yet**. If that folder was left behind from an interrupted or incompatible run, PyApp can skip reinstall and you see errors such as `ModuleNotFoundError: anki_image_updater` until the folder is removed. The launchers therefore fingerprint the shipped **`AnkiImageUpdaterPyApp`** binary and, when it changes (any new build you ship), run **`self restore`** once before starting the app so a normal upgrade clears the old layout automatically. You should still bump the app **version** in [`pyproject.toml`](pyproject.toml) for each release so paths and support questions stay unambiguous.
+
 The Windows launcher is a **.NET 8** WinForms app published as a **single self-contained** executable, so recipients do **not** need to install the .NET runtime separately.
 
 ### Bypass the operating system's "untrusted file" warning
@@ -50,8 +52,8 @@ On first run the app asks for API keys (Pexels, Unsplash, Freepik, Pixabay). Wik
 
 ### Uninstall
 Delete the app (and the downloaded zip / installer) and the runtime cache:
-- **macOS**: `~/Library/Application Support/pyapp/anki-image-updater`
-- **Windows**: `%LOCALAPPDATA%\pyapp\anki-image-updater` (Python / venv cache) and `%LOCALAPPDATA%\anki-image-updater\pyapp\` (extracted PyApp bootstrapper from the launcher)
+- **macOS**: `~/Library/Application Support/pyapp/anki-image-updater` (PyApp install) and optionally `~/Library/Application Support/com.leofidjeland.anki-image-updater` (tiny launcher marker used to detect upgrades)
+- **Windows**: `%LOCALAPPDATA%\pyapp\anki-image-updater` (Python / venv cache), `%LOCALAPPDATA%\anki-image-updater\pyapp\` (extracted PyApp from the single-file launcher), and optionally `%LOCALAPPDATA%\com.leofidjeland.anki-image-updater\` (launcher upgrade marker)
 
 ## Troubleshooting
 - **Crashes or won’t start on a friend’s Mac (including macOS 15 / Sequoia)**: The OS version is rarely the cause by itself. Check these first:

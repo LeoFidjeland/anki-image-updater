@@ -55,14 +55,30 @@ internal sealed class LauncherForm : Form
         Controls.Add(progress);
 
         string pyapp;
+        string payloadSha256;
         try
         {
-            pyapp = MaterializePyAppFromEmbeddedResource();
+            (pyapp, payloadSha256) = MaterializePyAppFromEmbeddedResource();
         }
         catch (Exception ex)
         {
             MessageBox.Show(
                 $"Could not prepare Anki Image Updater:\n{ex.Message}",
+                "Error",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            Close();
+            return;
+        }
+
+        try
+        {
+            MaybeRestorePyAppInstall(pyapp, payloadSha256);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Could not refresh the Python environment for this app version:\n{ex.Message}",
                 "Error",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
@@ -129,8 +145,9 @@ internal sealed class LauncherForm : Form
 
     /// <summary>
     /// Extract the PyApp payload shipped inside this single-file exe to LocalApplicationData.
+    /// Returns the on-disk path and a lowercase hex SHA-256 of the embedded bytes (for upgrade detection).
     /// </summary>
-    private static string MaterializePyAppFromEmbeddedResource()
+    private static (string Path, string PayloadSha256) MaterializePyAppFromEmbeddedResource()
     {
         var asm = Assembly.GetExecutingAssembly();
         var res = asm.GetManifestResourceNames().FirstOrDefault(n =>
@@ -161,7 +178,41 @@ internal sealed class LauncherForm : Form
             File.WriteAllText(hashPath, hashHex);
         }
 
-        return path;
+        return (path, hashHex);
+    }
+
+    /// <summary>
+    /// PyApp skips bootstrap if its install directory already exists. When the shipped PyApp binary
+    /// changes, run <c>self restore</c> once so upgrades do not inherit a broken or stale layout.
+    /// </summary>
+    private static void MaybeRestorePyAppInstall(string pyappPath, string payloadSha256)
+    {
+        var stateDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "com.leofidjeland.anki-image-updater");
+        Directory.CreateDirectory(stateDir);
+        var marker = Path.Combine(stateDir, "pyapp_payload_sha256");
+        if (File.Exists(marker) &&
+            string.Equals(File.ReadAllText(marker).Trim(), payloadSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        using var restore = Process.Start(new ProcessStartInfo
+        {
+            FileName = pyappPath,
+            Arguments = "self restore",
+            UseShellExecute = false,
+            WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        });
+        if (restore is null)
+            throw new InvalidOperationException("Could not start PyApp self restore.");
+        restore.WaitForExit();
+        if (restore.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"PyApp self restore exited with code {restore.ExitCode}. Try deleting %LOCALAPPDATA%\\pyapp\\anki-image-updater and launch again.");
+
+        File.WriteAllText(marker, payloadSha256);
     }
 
     private static string EscapeWindowsArg(string arg)

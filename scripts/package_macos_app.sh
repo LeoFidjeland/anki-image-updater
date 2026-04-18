@@ -54,6 +54,7 @@ chmod +x "$app/Contents/MacOS/AnkiImageUpdaterPyApp"
 # Thin Swift launcher: progress UI while PyApp bootstraps, then hands off to NiceGUI in the browser.
 swiftc -O \
     -framework AppKit \
+    -framework CryptoKit \
     -o "$app/Contents/MacOS/AnkiImageUpdater" \
     "$repo_root/packaging/macos/launcher/main.swift"
 chmod +x "$app/Contents/MacOS/AnkiImageUpdater"

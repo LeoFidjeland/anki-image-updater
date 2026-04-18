@@ -1,6 +1,6 @@
 [project]
 name = "anki-image-updater"
-version = "1.0.1"
+version = "1.0.6"
 description = "A GUI tool to update Anki cards with images from Pexels, Unsplash, Freepik, Pixabay, and Wikimedia Commons."
 authors = [{name = "Leo Fidjeland", email = "leo@example.com"}]
 readme = "README.md"

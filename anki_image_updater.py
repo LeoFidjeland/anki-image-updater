@@ -906,17 +906,20 @@ async def index_page():
                     ui.label("Could not fetch decks. Is Anki running?").classes('text-red-500')
 
 def start_app():
-    async def check_shutdown():
-        print("🔌 Client disconnected. Waiting 4s to see if it's a refresh...", flush=True)
-        await asyncio.sleep(4.0)
-        count = len(client.Client.instances)
-        if count == 0:
-            print("❌ No clients connected. Shutting down server...", flush=True)
+    # Quit the server (and thus the PyApp process / macOS launcher) when the last browser
+    # session is torn down. Use on_delete, not on_disconnect: NiceGUI 3 also invokes
+    # disconnect during the reconnect grace window, and clients stay in Client.instances
+    # until delete() runs after reconnect_timeout (see nicegui.client.Client.handle_disconnect).
+    async def shutdown_if_no_clients_left() -> None:
+        await asyncio.sleep(1.0)
+        if len(client.Client.instances) == 0:
+            logger.info("Last browser session closed; shutting down")
             app.shutdown()
-        else:
-            print("✅ Client reconnected (or other tabs open). Staying alive.", flush=True)
-            
-    app.on_disconnect(lambda: asyncio.create_task(check_shutdown()))
+
+    def schedule_shutdown_if_empty(_: client.Client) -> None:
+        asyncio.create_task(shutdown_if_no_clients_left())
+
+    app.on_delete(schedule_shutdown_if_empty)
 
     def open_browser():
         import webbrowser

@@ -1,10 +1,69 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Lightweight GUI shell around the PyApp binary: shows first-launch feedback while the
 /// Rust bootstrapper downloads / unpacks Python and runs `pip`, then hides once NiceGUI is up.
 
 private let serverURL = URL(string: "http://127.0.0.1:8080/")!
+
+/// Matches `CFBundleIdentifier` in Info.plist — small launcher state (not PyApp’s own cache).
+private let launcherStateDirName = "com.leofidjeland.anki-image-updater"
+
+/// PyApp only bootstraps when its install directory is missing; if that folder exists it skips
+/// reinstall. When we ship a new `AnkiImageUpdaterPyApp` binary, fingerprint it and run
+/// `self restore` once so users are not stuck with a broken or stale environment.
+private func sha256Hex(ofFile path: String) -> String? {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+    let digest = SHA256.hash(data: data)
+    return digest.map { String(format: "%02x", $0) }.joined()
+}
+
+private func maybeRestorePyAppInstallIfPayloadChanged(pyappPath: String) throws {
+    guard let hash = sha256Hex(ofFile: pyappPath) else {
+        throw NSError(
+            domain: "AnkiImageUpdater",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Could not read PyApp payload for fingerprinting."]
+        )
+    }
+
+    guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        throw NSError(
+            domain: "AnkiImageUpdater",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Could not resolve Application Support directory."]
+        )
+    }
+
+    let stateDir = base.appendingPathComponent(launcherStateDirName, isDirectory: true)
+    try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+    let marker = stateDir.appendingPathComponent("pyapp_payload_sha256", isDirectory: false)
+
+    if let previous = try? String(contentsOf: marker, encoding: .utf8),
+       previous.trimmingCharacters(in: .whitespacesAndNewlines) == hash
+    {
+        return
+    }
+
+    let restore = Process()
+    restore.executableURL = URL(fileURLWithPath: pyappPath)
+    restore.arguments = ["self", "restore"]
+    restore.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+
+    try restore.run()
+    restore.waitUntilExit()
+    guard restore.terminationStatus == 0 else {
+        throw NSError(
+            domain: "AnkiImageUpdater",
+            code: Int(restore.terminationStatus),
+            userInfo: [NSLocalizedDescriptionKey:
+                "Installer maintenance failed (exit \(restore.terminationStatus)). You can quit, delete ~/Library/Application Support/pyapp/anki-image-updater, and try again."]
+        )
+    }
+
+    try hash.write(to: marker, atomically: true, encoding: .utf8)
+}
 
 private func pollUntilServerReady(window: NSWindow, attemptsRemaining: Int) {
     guard attemptsRemaining > 0 else { return }
@@ -53,6 +112,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let alert = NSAlert()
             alert.messageText = "Missing application files"
             alert.informativeText = "Could not find AnkiImageUpdaterPyApp inside the app bundle."
+            alert.runModal()
+            NSApp.terminate(nil)
+            return
+        }
+
+        do {
+            try maybeRestorePyAppInstallIfPayloadChanged(pyappPath: pyappPath)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not prepare installation"
+            alert.informativeText = error.localizedDescription
             alert.runModal()
             NSApp.terminate(nil)
             return
