@@ -69,6 +69,7 @@ dependencies = [
  "anyhow",
  "eframe",
  "egui",
+ "glow",
  "msgbox",
  "sha2",
  "ureq",

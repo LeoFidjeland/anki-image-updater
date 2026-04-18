@@ -147,9 +147,8 @@ mod real {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
-        fn on_close_event(&mut self) -> bool {
+        fn on_exit(&mut self, _gl: Option<&glow::Context>) {
             kill_process_tree(self.child.id());
-            true
         }
     }
 
