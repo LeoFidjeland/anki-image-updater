@@ -124,7 +124,24 @@ jobs:
             throw "Launcher exe is only $sz bytes (expected at least ~$min with embedded PyApp)."
           }
           $rcedit = Join-Path $env:RUNNER_TEMP "rcedit-x64.exe"
-          Invoke-WebRequest -Uri $env:RCEDIT_URL -OutFile $rcedit -UseBasicParsing
+          $url = $env:RCEDIT_URL
+          # GitHub release CDN sometimes returns 504; curl --retry handles flakes better than a single IWR.
+          & curl.exe -fsSL --retry 8 --retry-delay 10 --connect-timeout 60 --max-time 300 -o $rcedit $url
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "curl.exe failed ($LASTEXITCODE); retrying with Invoke-WebRequest"
+            $downloaded = $false
+            for ($i = 1; $i -le 6 -and -not $downloaded; $i++) {
+              try {
+                Invoke-WebRequest -Uri $url -OutFile $rcedit -UseBasicParsing -TimeoutSec 300
+                $downloaded = $true
+              } catch {
+                Write-Warning "Invoke-WebRequest attempt $i : $_"
+                Start-Sleep -Seconds (10 * $i)
+              }
+            }
+            if (-not $downloaded) { throw "Failed to download rcedit after retries (504/timeouts are common on GitHub releases — re-run the workflow)." }
+          }
+          if ((Get-Item $rcedit).Length -lt 1024) { throw "rcedit download looks corrupt or empty" }
           & $rcedit $exe --set-icon $ico
           "ASSET_PATH=$exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
