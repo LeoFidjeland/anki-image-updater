@@ -7,6 +7,11 @@ __pycache__/
 uv.lock
 .env
 
+# Build artifacts
+build/
+dist/
+dist-bin/
+
 # Mac
 .DS_Store
 

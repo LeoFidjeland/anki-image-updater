@@ -45,7 +45,7 @@ async def test_card_manager_load_deck_no_cards(card_logic_manager):
     success, msg = await card_logic_manager.load_deck("Test Deck")
     
     card_logic_manager.anki.find_notes.assert_called_once_with(
-        'deck:"Test Deck" -tag:Replaced'
+        'deck:"Test Deck" -tag:Replaced -tag:Finished'
     )
     
     assert not success

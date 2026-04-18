@@ -5,27 +5,31 @@ import html
 import asyncio
 import argparse
 import logging
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-# PyInstaller Fix: nicegui assets
-if getattr(sys, 'frozen', False):
-    sys.path.insert(0, sys._MEIPASS)
+from platformdirs import user_log_dir
 
 from nicegui import ui, app, client
 
-from config_manager import ConfigManager
+from config_manager import APP_NAME, AUTHOR, ConfigManager
 from anki_client import AnkiClient, AnkiConnectError
 from search_providers import ImageSearcher
 from core import CardManagerLogic, ActionError
 from utils import strip_html_to_plain
 
-# Setup Logging
+# Log to user_log_dir so double-clicked binaries don't try to write to cwd
+# (which may be /, C:\Windows\System32, or otherwise non-writable).
+_log_dir = Path(user_log_dir(APP_NAME, AUTHOR))
+_log_dir.mkdir(parents=True, exist_ok=True)
+LOG_FILE = _log_dir / "anki_image_updater.log"
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("anki_image_updater.log", encoding='utf-8'),
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -926,6 +930,4 @@ def start_app():
     sys.exit(0)
 
 if __name__ in {"__main__", "__mp_main__"}:
-    import multiprocessing
-    multiprocessing.freeze_support() 
     start_app()

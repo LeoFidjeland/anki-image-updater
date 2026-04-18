@@ -10,51 +10,76 @@ A graphical tool to help you find and update images for your Anki cards using Pe
 
 ## Prerequisites
 - **Anki** must be running with the **AnkiConnect** add-on installed.
-- **Python 3.9+**
+  - Install AnkiConnect in Anki: `Tools → Add-ons → Get Add-ons…`, paste code `2055492159`, restart Anki.
 
-## Installation
+## Install (for end users)
 
-The easiest way to install and run the application globally is using [`uv`](https://docs.astral.sh/uv/):
+1. Download the file for your operating system from the [latest release](https://github.com/LeoFidjeland/anki-image-updater/releases/latest):
+    - **macOS (Apple Silicon)**: `AnkiImageUpdater-macos-arm64`
+    - **Windows (64-bit)**: `AnkiImageUpdater-windows-x64.exe`
+2. Make sure Anki is running.
+3. Double-click the downloaded file.
 
-```bash
-uv tool install git+https://github.com/LeoFidjeland/anki-image-updater
-```
+### First launch takes 10–30 seconds
 
-Once installed, you can start the application from your terminal:
+On first launch the app downloads a private Python runtime (~30 MB) into a cache directory. You will see a terminal window briefly. Subsequent launches start in under a second.
 
-```bash
-anki-image-updater
-```
+### Bypass the operating system's "untrusted file" warning
 
-*(To remove the application later, simply run `uv tool uninstall anki-image-updater`)*
+The binaries are not code-signed (yet), so your OS will warn you the first time:
 
-A browser window will open automatically. Wait 4 seconds after closing the tab for the tool to auto-shutdown, or press `Ctrl+C` in your terminal.
+**macOS**: Finder will say *"cannot be opened because it is from an unidentified developer"*.
+- Right-click (or Ctrl-click) the file → **Open** → **Open** in the dialog. You only need to do this once.
+- Alternatively, from Terminal: `xattr -d com.apple.quarantine ~/Downloads/AnkiImageUpdater-macos-arm64`, then double-click normally.
+
+**Windows**: SmartScreen will say *"Windows protected your PC"*.
+- Click **More info** → **Run anyway**.
+
+### Configuration
+On first run the app asks for API keys (Pexels, Unsplash, Freepik, Pixabay). Wikimedia Commons does not require a key. Settings are saved to your user config directory.
+
+### Uninstall
+Delete the downloaded binary and the app's cache directory:
+- **macOS**: `~/Library/Application Support/pyapp/anki-image-updater`
+- **Windows**: `%LOCALAPPDATA%\pyapp\anki-image-updater`
+
+## Troubleshooting
+- **App doesn't connect to Anki**: Ensure Anki is running and AnkiConnect is configured to allow `localhost`.
+- **Browser doesn't open**: Navigate manually to `http://localhost:8080`.
+- **Log file location**:
+  - macOS: `~/Library/Logs/anki-image-updater/anki_image_updater.log`
+  - Windows: `%LOCALAPPDATA%\LeoFidjeland\anki-image-updater\Logs\anki_image_updater.log`
 
 ## Development
 
-If you want to contribute or modify the application, use `uv` to manage the project locally:
+The repo uses [`uv`](https://docs.astral.sh/uv/) for Python dependency management.
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/LeoFidjeland/anki-image-updater.git
-   cd anki-image-updater
-   ```
-2. Run the application (this automatically creates an isolated virtual environment and installs dependencies):
-   ```bash
-   uv run anki-image-updater
-   ```
-   *(Alternatively, you can run `uv run python anki_image_updater.py`)*
+### Run from source
 
-### Configuration
-The app will prompt you for API keys (Pexels, Unsplash, Freepik, Pixabay) upon first launch. Wikimedia Commons does not require a key. Settings are saved to your user configuration directory.
+```bash
+git clone https://github.com/LeoFidjeland/anki-image-updater.git
+cd anki-image-updater
+uv run anki-image-updater
+```
 
-### Running Tests
-To run the project's test suite, execute:
+### Run the test suite
+
 ```bash
 uv run pytest
 ```
 
-## Troubleshooting
-- **App doesn't connect to Anki**: Ensure Anki is running and AnkiConnect is configured to allow `localhost`.
-- **Browser doesn't open**: You can manually navigate to `http://localhost:8080`.
-- **Permissions**: On macOS, you might need to allow the application to run via System Settings > Security & Privacy if it's not signed.
+### Build a single-file binary locally
+
+Requires [`uv`](https://docs.astral.sh/uv/) plus a Rust toolchain (`brew install rust` on macOS, or `rustup` on Windows/Linux).
+
+```bash
+./scripts/build_binary.sh
+```
+
+Output lands at `dist-bin/bin/AnkiImageUpdater-<os>-<arch>[.exe]`. The build does two steps: `uv build --wheel` to produce a standard Python wheel, then `cargo install pyapp` to embed that wheel into a small Rust bootstrapper. The bootstrapper downloads [python-build-standalone](https://github.com/astral-sh/python-build-standalone) (the same distribution `uv` itself uses) on the user's first launch, creates a per-app venv, and runs the entry point.
+
+### Release a new version
+
+1. Bump `version` in [`pyproject.toml`](./pyproject.toml).
+2. Commit and tag: `git tag v0.2.0 && git push --tags`.
+3. GitHub Actions builds macOS and Windows binaries and attaches them to the release.
