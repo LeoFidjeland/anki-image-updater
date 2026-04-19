@@ -7,7 +7,7 @@
 #
 # Output:
 #   macOS: dist-bin/AnkiImageUpdater-<arch>.zip containing Anki Image Updater.app
-#   Windows (Git Bash): dist-bin/AnkiImageUpdater-windows-x64.exe (Rust + egui launcher; embeds PyApp; no .NET)
+#   Windows (Git Bash): dist-bin/AnkiImageUpdater-windows-x64.exe (Rust shim + embedded PyApp; no .NET)
 #   Linux: dist-bin/bin/AnkiImageUpdater-linux-<arch> (raw PyApp binary only)
 
 set -euo pipefail
@@ -27,8 +27,9 @@ echo ">> Wheel: $wheel"
 uname_s="$(uname -s)"
 uname_m="$(uname -m)"
 if [[ "$uname_s" == MINGW* || "$uname_s" == MSYS* || "$uname_s" == CYGWIN* ]]; then
-  export RUSTFLAGS="-C target-feature=+crt-static"
-  echo ">> Windows: RUSTFLAGS=$RUSTFLAGS (static MSVC runtime for PyApp + launcher)"
+  manifest="$(pwd)/packaging/windows/as-invoker.manifest"
+  export RUSTFLAGS="-C target-feature=+crt-static -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:$manifest"
+  echo ">> Windows PyApp build RUSTFLAGS: $RUSTFLAGS"
 fi
 
 echo ">> Building PyApp bootstrapper"
@@ -68,10 +69,12 @@ esac
 if [[ "$uname_s" == MINGW* || "$uname_s" == MSYS* || "$uname_s" == CYGWIN* ]]; then
     echo ">> Renaming PyApp payload"
     mv dist-bin/bin/pyapp.exe dist-bin/bin/AnkiImageUpdaterPyApp.exe
-    echo ">> Building Rust + egui launcher (requires Rust stable + MSVC)"
+    echo ">> Building Rust launcher (requires Rust stable + MSVC)"
     assets="packaging/windows/launcher-rust/assets"
     mkdir -p "$assets"
     cp dist-bin/bin/AnkiImageUpdaterPyApp.exe "$assets/"
+    # Launcher embeds manifest + icon via winres (`build.rs`); do not pass MANIFESTINPUT here.
+    export RUSTFLAGS="-C target-feature=+crt-static"
     (cd packaging/windows/launcher-rust && cargo build --release)
     out_exe="dist-bin/AnkiImageUpdater-windows-x64.exe"
     cp packaging/windows/launcher-rust/target/release/AnkiImageUpdater.exe "$out_exe"

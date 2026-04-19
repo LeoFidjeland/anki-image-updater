@@ -1,5 +1,6 @@
-//! Windows-only launcher: materializes embedded PyApp, optional `self restore`, spawns PyApp with
-//! its own console (first-run bootstrap visible), small egui window until http://127.0.0.1:8080/ responds.
+//! Windows-only launcher: materializes embedded PyApp, optional `self restore`, then starts PyApp in
+//! a **new console** (bootstrap / install output). No separate GUI — PyApp’s console is the only
+//! progress UI. This process exits immediately after spawn so we never `wait()` on the child.
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
@@ -12,32 +13,27 @@ fn main() {
 }
 
 #[cfg(windows)]
-fn main() -> eframe::Result<()> {
-    real::run()
+fn main() {
+    real::run();
 }
 
 #[cfg(windows)]
 mod real {
     use anyhow::{anyhow, Context, Result};
-    use egui::{CentralPanel, ProgressBar};
     use sha2::{Digest, Sha256};
     use std::fs;
     use std::io::Write;
     use std::path::{Path, PathBuf};
-    use std::process::{Child, Command, Stdio};
-    use std::time::{Duration, Instant};
+    use std::process::{Command, Stdio};
 
     /// https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     const PYAPP_BYTES: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/assets/AnkiImageUpdaterPyApp.exe"
     ));
 
-    /// Set `ANKI_IMAGE_UPDATER_LAUNCHER_DEBUG=1` and run the `.exe` from **cmd** or **PowerShell**
-    /// so `spawn` / I/O errors print here (release builds use the GUI subsystem and hide them otherwise).
     fn launcher_debug_stderr() -> bool {
         std::env::var_os("ANKI_IMAGE_UPDATER_LAUNCHER_DEBUG").is_some()
     }
@@ -65,7 +61,7 @@ mod real {
         }
     }
 
-    pub fn run() -> eframe::Result<()> {
+    pub fn run() {
         attach_console_for_debug();
 
         let pyapp_path;
@@ -109,77 +105,19 @@ mod real {
             }
         };
 
-        let child = match spawn_pyapp_with_console(&pyapp_path, &home) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln_launcher_err("Could not start Anki Image Updater (spawn PyApp)", &e);
-                let _ = msgbox::create(
-                    "Anki Image Updater",
-                    &format!("Could not start Anki Image Updater:\n{e}"),
-                    msgbox::IconType::Error,
-                );
-                std::process::exit(1);
-            }
-        };
-
-        let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_inner_size([440.0, 130.0])
-                .with_title("Anki Image Updater"),
-            ..Default::default()
-        };
-
-        eframe::run_native(
-            "Anki Image Updater",
-            options,
-            Box::new(move |_cc| {
-                Ok(Box::new(LauncherApp {
-                    child,
-                    last_poll: Instant::now() - Duration::from_secs(1),
-                    attempts_left: 720,
-                }) as Box<dyn eframe::App>)
-            }),
-        )
-    }
-
-    struct LauncherApp {
-        child: Child,
-        last_poll: Instant,
-        attempts_left: i32,
-    }
-
-    impl eframe::App for LauncherApp {
-        fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-            if let Ok(Some(_)) = self.child.try_wait() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                return;
-            }
-
-            if self.attempts_left > 0 && self.last_poll.elapsed() >= Duration::from_millis(250) {
-                self.last_poll = Instant::now();
-                self.attempts_left -= 1;
-                if probe_local_server() {
-                    // `Visible(false)` / minimize is unreliable on Windows with eframe; exit the
-                    // launcher instead. `std::process::exit` does not run `App::on_exit`, so we do
-                    // not taskkill PyApp — the child keeps running in its console.
-                    std::process::exit(0);
-                }
-            }
-
-            CentralPanel::default().show(ctx, |ui| {
-                ui.label(
-                    "Preparing the app. The first launch can take a minute while Python and \
-                     libraries are set up. A separate window shows download progress. This dialog \
-                     closes when the tool is ready in your browser.",
-                );
-                ui.add(ProgressBar::new(0.4).animate(true));
-            });
-            ctx.request_repaint_after(Duration::from_millis(100));
+        if let Err(e) = spawn_pyapp_with_console(&pyapp_path, &home) {
+            eprintln_launcher_err("Could not start Anki Image Updater (spawn PyApp)", &e);
+            let _ = msgbox::create(
+                "Anki Image Updater",
+                &format!("Could not start Anki Image Updater:\n{e}"),
+                msgbox::IconType::Error,
+            );
+            std::process::exit(1);
         }
 
-        fn on_exit(&mut self, _gl: Option<&glow::Context>) {
-            kill_process_tree(self.child.id());
-        }
+        // Do not drop `Child`: its destructor would wait until PyApp exits and this process would
+        // stay alive. `exit` skips destructors; the OS closes handles and PyApp keeps running.
+        std::process::exit(0);
     }
 
     fn user_profile_dir() -> Result<PathBuf> {
@@ -262,7 +200,7 @@ mod real {
         Ok(())
     }
 
-    fn spawn_pyapp_with_console(pyapp_path: &Path, home: &Path) -> Result<Child> {
+    fn spawn_pyapp_with_console(pyapp_path: &Path, home: &Path) -> Result<()> {
         use std::os::windows::process::CommandExt;
 
         let mut cmd = Command::new(pyapp_path);
@@ -276,32 +214,7 @@ mod real {
             cmd.arg(a);
         }
 
-        cmd.spawn().context("spawn PyApp")
-    }
-
-    /// NiceGUI binds :8080; TCP connect avoids HTTP/IPv4-vs-localhost quirks with ureq.
-    fn probe_local_server() -> bool {
-        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
-        let timeout = Duration::from_millis(400);
-        for addr in [
-            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 8080),
-            SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 8080),
-        ] {
-            if TcpStream::connect_timeout(&addr, timeout).is_ok() {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn kill_process_tree(pid: u32) {
-        use std::os::windows::process::CommandExt;
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+        cmd.spawn().context("spawn PyApp")?;
+        Ok(())
     }
 }

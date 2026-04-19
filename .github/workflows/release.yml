@@ -19,16 +19,11 @@ jobs:
           # Apple Silicon (M1/M2/M3/…). `macos-latest` is ARM64 on current images.
           - os: macos-latest
             asset_suffix: macos-arm64
-            rustflags: ""
           # Intel Mac (x86_64). Use GitHub’s `macos-15-intel` image (see actions/runner-images).
           - os: macos-15-intel
             asset_suffix: macos-intel
-            rustflags: ""
           - os: windows-latest
             asset_suffix: windows-x64
-            # `cargo install pyapp` does not reliably pick up repo `.cargo/config.toml`; set explicitly
-            # so PyApp.exe does not require VCRUNTIME140.dll on end-user machines.
-            rustflags: "-C target-feature=+crt-static"
     runs-on: ${{ matrix.os }}
 
     env:
@@ -36,7 +31,6 @@ jobs:
       PYAPP_PYTHON_VERSION: "3.12"
       PYAPP_FULL_ISOLATION: "true"
       PYAPP_PIP_EXTERNAL: "true"
-      RUSTFLAGS: ${{ matrix.rustflags }}
 
     steps:
       - name: Checkout
@@ -83,11 +77,20 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.cargo/config.toml', '.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'scripts/generate_windows_icon.py', 'packaging/macos/Info.plist.in', 'packaging/macos/launcher/main.swift', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png', 'packaging/windows/AppIcon.ico', 'packaging/windows/launcher-rust/Cargo.toml', 'packaging/windows/launcher-rust/Cargo.lock', 'packaging/windows/launcher-rust/src/main.rs') }}
+          key: ${{ runner.os }}-cargo-pyapp-${{ hashFiles('.cargo/config.toml', '.github/workflows/release.yml', 'scripts/package_macos_app.sh', 'scripts/generate_macos_icon.sh', 'scripts/generate_windows_icon.py', 'packaging/macos/Info.plist.in', 'packaging/macos/launcher/main.swift', 'packaging/macos/AppIcon.icns', 'packaging/macos/anki-image-updater-icon.png', 'packaging/windows/as-invoker.manifest', 'packaging/windows/AppIcon.ico', 'packaging/windows/launcher-rust/build.rs', 'packaging/windows/launcher-rust/Cargo.toml', 'packaging/windows/launcher-rust/Cargo.lock', 'packaging/windows/launcher-rust/src/main.rs') }}
           restore-keys: ${{ runner.os }}-cargo-pyapp-
 
-      - name: Build PyApp bootstrapper
+      # Windows: embed asInvoker manifest on PyApp.exe so CreateProcess from the launcher does not
+      # fail with error 740 (elevation required). CRT static link stays in repo `.cargo/config.toml`.
+      - name: Build PyApp bootstrapper (Unix)
+        if: runner.os != 'Windows'
         run: cargo install pyapp --force --root dist-bin
+
+      - name: Build PyApp bootstrapper (Windows)
+        if: runner.os == 'Windows'
+        run: cargo install pyapp --force --root dist-bin
+        env:
+          RUSTFLAGS: -C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:${{ github.workspace }}/packaging/windows/as-invoker.manifest
 
       - name: Rename PyApp binary
         shell: bash
@@ -102,12 +105,11 @@ jobs:
         if: runner.os == 'Windows'
         uses: dtolnay/rust-toolchain@stable
 
-      # Rust + egui micro-loader (~few MB): embeds PyApp bytes; no .NET on end users.
+      # Rust bootstrap (~few MB): embeds PyApp bytes; no .NET on end users.
+      # Icon + asInvoker manifest come from `launcher-rust/build.rs` (winres).
       - name: Build Windows launcher (Rust)
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          RCEDIT_URL: https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe
         run: |
           $ico = Join-Path $env:GITHUB_WORKSPACE "packaging/windows/AppIcon.ico"
           if (-not (Test-Path $ico)) { throw "Missing $ico — run: uv run --with pillow python scripts/generate_windows_icon.py" }
@@ -129,26 +131,6 @@ jobs:
           if ($sz -lt $min) {
             throw "Launcher exe is only $sz bytes (expected at least ~$min with embedded PyApp)."
           }
-          $rcedit = Join-Path $env:RUNNER_TEMP "rcedit-x64.exe"
-          $url = $env:RCEDIT_URL
-          # GitHub release CDN sometimes returns 504; curl --retry handles flakes better than a single IWR.
-          & curl.exe -fsSL --retry 8 --retry-delay 10 --connect-timeout 60 --max-time 300 -o $rcedit $url
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "curl.exe failed ($LASTEXITCODE); retrying with Invoke-WebRequest"
-            $downloaded = $false
-            for ($i = 1; $i -le 6 -and -not $downloaded; $i++) {
-              try {
-                Invoke-WebRequest -Uri $url -OutFile $rcedit -UseBasicParsing -TimeoutSec 300
-                $downloaded = $true
-              } catch {
-                Write-Warning "Invoke-WebRequest attempt $i : $_"
-                Start-Sleep -Seconds (10 * $i)
-              }
-            }
-            if (-not $downloaded) { throw "Failed to download rcedit after retries (504/timeouts are common on GitHub releases — re-run the workflow)." }
-          }
-          if ((Get-Item $rcedit).Length -lt 1024) { throw "rcedit download looks corrupt or empty" }
-          & $rcedit $exe --set-icon $ico
           "ASSET_PATH=$exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # Ship a real .app bundle (double-click works like other Mac apps). The zip expands to
