@@ -137,7 +137,6 @@ mod real {
                     child,
                     last_poll: Instant::now() - Duration::from_secs(1),
                     attempts_left: 720,
-                    hide_viewport: false,
                 }) as Box<dyn eframe::App>)
             }),
         )
@@ -147,7 +146,6 @@ mod real {
         child: Child,
         last_poll: Instant,
         attempts_left: i32,
-        hide_viewport: bool,
     }
 
     impl eframe::App for LauncherApp {
@@ -157,17 +155,14 @@ mod real {
                 return;
             }
 
-            if self.hide_viewport {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                return;
-            }
-
             if self.attempts_left > 0 && self.last_poll.elapsed() >= Duration::from_millis(250) {
                 self.last_poll = Instant::now();
                 self.attempts_left -= 1;
                 if probe_local_server() {
-                    self.hide_viewport = true;
+                    // `Visible(false)` / minimize is unreliable on Windows with eframe; exit the
+                    // launcher instead. `std::process::exit` does not run `App::on_exit`, so we do
+                    // not taskkill PyApp — the child keeps running in its console.
+                    std::process::exit(0);
                 }
             }
 
@@ -175,7 +170,7 @@ mod real {
                 ui.label(
                     "Preparing the app. The first launch can take a minute while Python and \
                      libraries are set up. A separate window shows download progress. This dialog \
-                     hides when the tool is ready in your browser.",
+                     closes when the tool is ready in your browser.",
                 );
                 ui.add(ProgressBar::new(0.4).animate(true));
             });
@@ -284,14 +279,19 @@ mod real {
         cmd.spawn().context("spawn PyApp")
     }
 
+    /// NiceGUI binds :8080; TCP connect avoids HTTP/IPv4-vs-localhost quirks with ureq.
     fn probe_local_server() -> bool {
-        match ureq::get("http://127.0.0.1:8080/")
-            .timeout(Duration::from_millis(500))
-            .call()
-        {
-            Ok(resp) => (200..500).contains(&resp.status()),
-            Err(_) => false,
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
+        let timeout = Duration::from_millis(400);
+        for addr in [
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 8080),
+            SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 8080),
+        ] {
+            if TcpStream::connect_timeout(&addr, timeout).is_ok() {
+                return true;
+            }
         }
+        false
     }
 
     fn kill_process_tree(pid: u32) {

@@ -17,4 +17,3 @@ glow = "0.14.2"
 sha2 = "0.10"
 anyhow = "1.0"
 msgbox = "0.7"
-ureq = { version = "2.12", default-features = false }
