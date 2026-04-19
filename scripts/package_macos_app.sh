@@ -55,7 +55,16 @@ cp "$binary" "$app/Contents/MacOS/AnkiImageUpdaterPyApp"
 chmod +x "$app/Contents/MacOS/AnkiImageUpdaterPyApp"
 
 # Thin Swift launcher: progress UI while PyApp bootstraps, then hands off to NiceGUI in the browser.
+# Explicit -target is required: swiftc often records the *SDK* default min OS without it, which
+# triggers “requires newer macOS” on Ventura / older despite MACOSX_DEPLOYMENT_TARGET.
+host_arch="$(uname -m)"
+case "$host_arch" in
+  arm64)  swift_target="arm64-apple-macos11.0" ;;
+  x86_64) swift_target="x86_64-apple-macos11.0" ;;
+  *) echo "unsupported uname -m: $host_arch" >&2; exit 1 ;;
+esac
 swiftc -O \
+    -target "$swift_target" \
     -framework AppKit \
     -framework CryptoKit \
     -o "$app/Contents/MacOS/AnkiImageUpdater" \

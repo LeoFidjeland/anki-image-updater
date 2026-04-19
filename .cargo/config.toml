@@ -2,3 +2,11 @@
 # some Windows installs do not ship that. Static CRT keeps launchers self-contained.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# PyApp / Rust Mach-O: force LC_BUILD_VERSION min OS so older Macs don’t show “requires newer macOS”.
+# (MACOSX_DEPLOYMENT_TARGET alone is not always applied to every rustc invocation.)
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-mmacosx-version-min=11.0"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-mmacosx-version-min=11.0"]
