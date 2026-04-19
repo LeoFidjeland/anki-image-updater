@@ -70,7 +70,8 @@ Delete the app (and the downloaded zip / installer) and the runtime cache:
 - **Windows: exits immediately, no `%LOCALAPPDATA%\anki-image-updater\pyapp\`**: The launcher failed before materializing PyApp (corrupt download, blocked by antivirus, or a **bad local build** without `assets/AnkiImageUpdaterPyApp.exe` baked in). Check **Windows Security → Protection history**, re-download the release, or rebuild with [`scripts/build_binary.sh`](scripts/build_binary.sh). **GUI apps do not print to `cmd`** — use Task Manager, Event Viewer, or run the PyApp path above after a successful launch to see console output.
 - **Log file location**:
   - macOS: `~/Library/Logs/anki-image-updater/anki_image_updater.log`
-  - Windows: `%LOCALAPPDATA%\LeoFidjeland\anki-image-updater\Logs\anki_image_updater.log`
+  - Windows (app / Python): `%LOCALAPPDATA%\LeoFidjeland\anki-image-updater\Logs\anki_image_updater.log`
+  - Windows (**launcher** shim errors, e.g. spawn / materialize): `%LOCALAPPDATA%\anki-image-updater\launcher.log`
 
 ## Development
 

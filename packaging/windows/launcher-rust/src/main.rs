@@ -21,10 +21,11 @@ fn main() {
 mod real {
     use anyhow::{anyhow, Context, Result};
     use sha2::{Digest, Sha256};
-    use std::fs;
+    use std::fs::{self, OpenOptions};
     use std::io::Write;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::process::{Command, Stdio};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     /// https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
@@ -61,6 +62,39 @@ mod real {
         }
     }
 
+    /// `%LOCALAPPDATA%\anki-image-updater\launcher.log` — append-only, best-effort (never panics).
+    fn launcher_log_path() -> Result<PathBuf> {
+        Ok(local_app_data()?.join("anki-image-updater").join("launcher.log"))
+    }
+
+    fn log_timestamp() -> String {
+        let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        format!("{}.{:03}Z", d.as_secs(), d.subsec_millis())
+    }
+
+    fn log_append(line: &str) {
+        let path = match launcher_log_path() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{} {}", log_timestamp(), line);
+        }
+    }
+
+    fn log_err(context: &str, e: &anyhow::Error) {
+        log_append(&format!("ERROR {context}: {e:#}"));
+    }
+
+    fn user_hint_logfile() -> String {
+        launcher_log_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "%LOCALAPPDATA%\\anki-image-updater\\launcher.log".to_string())
+    }
+
     pub fn run() {
         attach_console_for_debug();
 
@@ -73,9 +107,13 @@ mod real {
             }
             Err(e) => {
                 eprintln_launcher_err("Could not prepare Anki Image Updater", &e);
+                log_err("materialize PyApp", &e);
+                let hint = user_hint_logfile();
                 let _ = msgbox::create(
                     "Anki Image Updater",
-                    &format!("Could not prepare Anki Image Updater:\n{e}"),
+                    &format!(
+                        "Could not prepare Anki Image Updater:\n{e}\n\nDetails: {hint}"
+                    ),
                     msgbox::IconType::Error,
                 );
                 std::process::exit(1);
@@ -84,9 +122,13 @@ mod real {
 
         if let Err(e) = maybe_restore(&pyapp_path, &payload_sha) {
             eprintln_launcher_err("Could not refresh the Python environment", &e);
+            log_err("PyApp self restore", &e);
+            let hint = user_hint_logfile();
             let _ = msgbox::create(
                 "Anki Image Updater",
-                &format!("Could not refresh the Python environment:\n{e}"),
+                &format!(
+                    "Could not refresh the Python environment:\n{e}\n\nDetails: {hint}"
+                ),
                 msgbox::IconType::Error,
             );
             std::process::exit(1);
@@ -96,27 +138,39 @@ mod real {
             Ok(h) => h,
             Err(e) => {
                 eprintln_launcher_err("Could not resolve your profile folder", &e);
+                log_err("USERPROFILE", &e);
+                let hint = user_hint_logfile();
                 let _ = msgbox::create(
                     "Anki Image Updater",
-                    &format!("Could not resolve your profile folder:\n{e}"),
+                    &format!(
+                        "Could not resolve your profile folder:\n{e}\n\nDetails: {hint}"
+                    ),
                     msgbox::IconType::Error,
                 );
                 std::process::exit(1);
             }
         };
 
-        if let Err(e) = spawn_pyapp_with_console(&pyapp_path, &home) {
-            eprintln_launcher_err("Could not start Anki Image Updater (spawn PyApp)", &e);
-            let _ = msgbox::create(
-                "Anki Image Updater",
-                &format!("Could not start Anki Image Updater:\n{e}"),
-                msgbox::IconType::Error,
-            );
-            std::process::exit(1);
-        }
+        let pid = match spawn_pyapp_with_console(&pyapp_path, &home) {
+            Ok(pid) => pid,
+            Err(e) => {
+                eprintln_launcher_err("Could not start Anki Image Updater (spawn PyApp)", &e);
+                log_err("spawn PyApp", &e);
+                let hint = user_hint_logfile();
+                let _ = msgbox::create(
+                    "Anki Image Updater",
+                    &format!(
+                        "Could not start Anki Image Updater:\n{e}\n\nDetails: {hint}"
+                    ),
+                    msgbox::IconType::Error,
+                );
+                std::process::exit(1);
+            }
+        };
 
-        // Do not drop `Child`: its destructor would wait until PyApp exits and this process would
-        // stay alive. `exit` skips destructors; the OS closes handles and PyApp keeps running.
+        log_append(&format!("OK spawned PyApp pid={pid}"));
+        // Do not drop `Child`: its destructor would wait until PyApp exits. `exit` skips
+        // destructors; the OS closes handles and PyApp keeps running.
         std::process::exit(0);
     }
 
@@ -200,7 +254,7 @@ mod real {
         Ok(())
     }
 
-    fn spawn_pyapp_with_console(pyapp_path: &Path, home: &Path) -> Result<()> {
+    fn spawn_pyapp_with_console(pyapp_path: &Path, home: &Path) -> Result<u32> {
         use std::os::windows::process::CommandExt;
 
         let mut cmd = Command::new(pyapp_path);
@@ -214,7 +268,9 @@ mod real {
             cmd.arg(a);
         }
 
-        cmd.spawn().context("spawn PyApp")?;
-        Ok(())
+        let child = cmd.spawn().context("spawn PyApp")?;
+        let pid = child.id();
+        std::mem::forget(child);
+        Ok(pid)
     }
 }
