@@ -8,6 +8,16 @@ from unittest.mock import MagicMock, AsyncMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config_manager import ConfigManager
+import deck_coordinator
+
+
+@pytest.fixture(autouse=True)
+def _reset_deck_coordinator_registry():
+    """Keep the shared-coordinator registry empty between tests so one
+    test's fake deck never leaks into another test's assertions."""
+    deck_coordinator.reset_registry()
+    yield
+    deck_coordinator.reset_registry()
 
 @pytest.fixture
 def mock_config(tmp_path, monkeypatch):

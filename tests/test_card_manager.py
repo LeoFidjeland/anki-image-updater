@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 import core
+import deck_coordinator
 from core import ActionError
 
 
@@ -197,6 +198,159 @@ async def test_card_manager_apply_image_to_card(card_logic_manager, monkeypatch)
     card_logic_manager.anki.store_media_file.assert_awaited_once_with(expected_filename, "fake_base64_data")
     card_logic_manager.anki.update_note_fields.assert_awaited_once()
     card_logic_manager.anki.add_tags.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_two_sessions_share_coordinator_and_never_get_same_card(
+    mock_config, monkeypatch
+):
+    """Two CardManagerLogic instances over the same deck must see different
+    cards from advance_to_next_valid_card — that's the whole point of the
+    shared coordinator."""
+    anki_a = AsyncMock()
+    anki_b = AsyncMock()
+
+    # Both sessions scan and see the same three cards.
+    scan_result = [
+        {
+            "noteId": nid,
+            "fields": {
+                "English": {"value": f"word-{nid}"},
+                "Image": {"value": ""},
+                "Image Source": {"value": ""},
+            },
+        }
+        for nid in (10, 20, 30)
+    ]
+    anki_a.find_notes = AsyncMock(return_value=[n["noteId"] for n in scan_result])
+    anki_a.get_notes_info = AsyncMock(return_value=scan_result)
+    anki_b.find_notes = AsyncMock(return_value=[n["noteId"] for n in scan_result])
+    anki_b.get_notes_info = AsyncMock(return_value=scan_result)
+    # No prior image → nothing to fetch as preview.
+    anki_a.get_media_file_base64 = AsyncMock(return_value=None)
+    anki_b.get_media_file_base64 = AsyncMock(return_value=None)
+
+    logic_a = core.CardManagerLogic(mock_config, anki_a, session_id="A")
+    logic_b = core.CardManagerLogic(mock_config, anki_b, session_id="B")
+
+    ok_a, _ = await logic_a.load_deck("Shared Deck")
+    ok_b, _ = await logic_b.load_deck("Shared Deck")
+    assert ok_a and ok_b
+    assert logic_a.coord is logic_b.coord  # same shared coordinator
+
+    got_a = []
+    got_b = []
+    # Alternate advances between sessions until the pool is empty.
+    while True:
+        a = await logic_a.advance_to_next_valid_card()
+        b = await logic_b.advance_to_next_valid_card()
+        if a:
+            got_a.append(logic_a.current_note["noteId"])
+        if b:
+            got_b.append(logic_b.current_note["noteId"])
+        if not a and not b:
+            break
+
+    assert sorted(got_a + got_b) == [10, 20, 30]
+    assert set(got_a).isdisjoint(set(got_b))
+
+
+@pytest.mark.asyncio
+async def test_skip_card_releases_coordinator_lease(mock_config):
+    """After skipping, the card must leave the shared queue entirely."""
+    anki = AsyncMock()
+    notes = [
+        {
+            "noteId": nid,
+            "fields": {
+                "English": {"value": f"w{nid}"},
+                "Image": {"value": ""},
+                "Image Source": {"value": ""},
+            },
+        }
+        for nid in (1, 2)
+    ]
+    anki.find_notes = AsyncMock(return_value=[n["noteId"] for n in notes])
+    anki.get_notes_info = AsyncMock(return_value=notes)
+    anki.get_media_file_base64 = AsyncMock(return_value=None)
+    anki.add_tags = AsyncMock(return_value=None)
+
+    logic = core.CardManagerLogic(mock_config, anki, session_id="only")
+    await logic.load_deck("Single User Deck")
+    assert await logic.advance_to_next_valid_card()
+    nid = logic.current_note["noteId"]
+
+    await logic.skip_card()
+
+    # Lease released + note removed from the shared queue.
+    assert logic.coord.active_lease_count() == 0
+    assert logic.coord.queue_size() == 1  # only the remaining one left
+
+
+@pytest.mark.asyncio
+async def test_apply_image_failure_returns_card_to_pool(mock_config, monkeypatch):
+    """A download failure must not strand the card — another session should
+    be able to pick it up."""
+    anki = AsyncMock()
+    notes = [
+        {
+            "noteId": 42,
+            "fields": {
+                "English": {"value": "dog"},
+                "Image": {"value": ""},
+                "Image Source": {"value": ""},
+            },
+        }
+    ]
+    anki.find_notes = AsyncMock(return_value=[42])
+    anki.get_notes_info = AsyncMock(return_value=notes)
+    anki.get_media_file_base64 = AsyncMock(return_value=None)
+    # Simulate a failed download (returns None).
+    monkeypatch.setattr("core.download_image_as_base64", AsyncMock(return_value=None))
+
+    logic_a = core.CardManagerLogic(mock_config, anki, session_id="A")
+    await logic_a.load_deck("Retry Deck")
+    await logic_a.advance_to_next_valid_card()
+
+    with pytest.raises(ActionError):
+        await logic_a.apply_image_to_card(
+            {"full": "http://x/y.jpg", "provider": "Pexels", "context_url": "http://x"}
+        )
+
+    # Card is back in the pool — session B can lease it.
+    logic_b = core.CardManagerLogic(mock_config, anki, session_id="B")
+    await logic_b.load_deck("Retry Deck")
+    assert await logic_b.advance_to_next_valid_card()
+    assert logic_b.current_note["noteId"] == 42
+
+
+@pytest.mark.asyncio
+async def test_release_session_leases_returns_cards_when_tab_closes(mock_config):
+    anki = AsyncMock()
+    notes = [
+        {
+            "noteId": nid,
+            "fields": {
+                "English": {"value": f"w{nid}"},
+                "Image": {"value": ""},
+                "Image Source": {"value": ""},
+            },
+        }
+        for nid in (1, 2)
+    ]
+    anki.find_notes = AsyncMock(return_value=[1, 2])
+    anki.get_notes_info = AsyncMock(return_value=notes)
+    anki.get_media_file_base64 = AsyncMock(return_value=None)
+
+    logic = core.CardManagerLogic(mock_config, anki, session_id="tab1")
+    await logic.load_deck("Close Test Deck")
+    await logic.advance_to_next_valid_card()
+    assert logic.coord.active_lease_count() == 1
+
+    released = await logic.release_session_leases()
+    assert released == 1
+    assert logic.coord.active_lease_count() == 0
+    assert logic.coord.leasable_count() == 2
 
 
 @pytest.mark.asyncio

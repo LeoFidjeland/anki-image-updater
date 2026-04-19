@@ -15,6 +15,7 @@ from nicegui import ui, app, client
 
 from config_manager import APP_NAME, AUTHOR, ConfigManager
 from anki_client import AnkiClient, AnkiConnectError
+from deck_coordinator import DEFAULT_HEARTBEAT_EVERY_S, new_session_id
 from search_providers import ImageSearcher
 from core import CardManagerLogic, ActionError
 from utils import strip_html_to_plain
@@ -54,6 +55,12 @@ for _name in ("httpx", "httpcore"):
 
 logger = logging.getLogger(__name__)
 
+# Per-client registry: lets app.on_delete release coordinator leases when a
+# browser tab is really gone (i.e. survived the reconnect grace window).
+# Keyed by NiceGUI's client.Client.id.
+_session_logic: dict[str, CardManagerLogic] = {}
+
+
 def notify(msg, type='info'):
     ui.notify(msg, type=type, position='bottom-left')
 
@@ -80,6 +87,7 @@ class AppUI:
         self._load_more_in_progress = False
         self._session_skipped = 0
         self._session_replaced = 0
+        self._waiting_timer = None  # Polls the coordinator while other users finish last cards
 
         # UI Elements
         self.status_label_idle = None
@@ -132,8 +140,17 @@ class AppUI:
         await self.next_card()
 
     async def next_card(self):
+        # Cancel any "waiting for others" poll timer from a previous no-card state.
+        self._stop_waiting_timer()
+
         found = await self.logic.advance_to_next_valid_card()
         if not found:
+            # Maybe other users are still working on the last few cards —
+            # in that case we just wait and recheck instead of declaring "done".
+            coord = self.logic.coord
+            if coord is not None and coord.active_lease_count() > 0:
+                self._show_waiting_for_others()
+                return
             notify("All cards processed!", type='positive')
             self._set_status_done()
             if self.provider_slot:
@@ -161,6 +178,62 @@ class AppUI:
         self._prefetch_generation = gen  # So fetch_and_show knows which gen this task belongs to
         
         self.refresh_ui_content()
+
+    def _stop_waiting_timer(self):
+        """Cancel the 'waiting for other users' polling timer if it's running."""
+        t = self._waiting_timer
+        self._waiting_timer = None
+        if t is not None:
+            try:
+                t.cancel()
+            except Exception:
+                # Timer already torn down — harmless.
+                pass
+
+    def _show_waiting_for_others(self):
+        """
+        Render a friendly holding-screen while other sessions still hold leases,
+        and poll the coordinator every few seconds to grab the next card as
+        soon as someone else releases or finishes.
+        """
+        coord = self.logic.coord
+        active = coord.active_lease_count() if coord else 0
+
+        if self.provider_slot:
+            self.provider_slot.clear()
+        if self.search_bar_slot:
+            self.search_bar_slot.clear()
+        if self.main_container:
+            self.main_container.clear()
+            with self.main_container:
+                with ui.column().classes('w-full items-center py-16 gap-4'):
+                    ui.label("⏳ Waiting for other users to finish...").classes(
+                        'text-xl text-slate-700 font-semibold animate-pulse'
+                    )
+                    ui.label(
+                        f"{active} card{'s' if active != 1 else ''} still "
+                        "open in other sessions. You'll pick up the next one "
+                        "automatically as soon as it's released."
+                    ).classes('text-sm text-slate-500 text-center max-w-md')
+
+        self._update_status_bar()
+
+        async def _poll():
+            if self._is_navigating:
+                return
+            if self.logic.coord is None:
+                self._stop_waiting_timer()
+                return
+            if self.logic.coord.leasable_count() > 0:
+                self._stop_waiting_timer()
+                await self.next_card()
+                return
+            if self.logic.coord.active_lease_count() == 0:
+                self._stop_waiting_timer()
+                await self.next_card()  # will hit the "all processed" branch
+                return
+
+        self._waiting_timer = ui.timer(3.0, _poll)
 
     async def _do_search(self, provider, term, page):
         """Runs a search with explicit snapshot params — never reads from self mid-flight."""
@@ -827,8 +900,19 @@ async def index_page():
     args = parse_arguments()
     config = ConfigManager()
     anki = AnkiClient()
-    logic = CardManagerLogic(config, anki)
+    session_id = new_session_id()
+    logic = CardManagerLogic(config, anki, session_id=session_id)
     searcher = ImageSearcher(config)
+
+    # Register so app.on_delete can release this session's coordinator leases
+    # once the browser tab is gone for good (after NiceGUI's reconnect window).
+    from nicegui import context as ng_context
+    _session_logic[ng_context.client.id] = logic
+
+    # Heartbeat keeps every lease held by this session fresh. Lease TTL is
+    # 5 minutes; pinging every 60 seconds means one or two missed beats still
+    # won't cause a spurious release.
+    ui.timer(DEFAULT_HEARTBEAT_EVERY_S, logic.heartbeat)
     
     missing = [k for k in ["PEXELS_API_KEY", "UNSPLASH_ACCESS_KEY", "FREEPIK_API_KEY"] if not config.get(k)]
     if len(missing) == 3:
@@ -906,20 +990,35 @@ async def index_page():
                     ui.label("Could not fetch decks. Is Anki running?").classes('text-red-500')
 
 def start_app():
-    # Quit the server (and thus the PyApp process / macOS launcher) when the last browser
-    # session is torn down. Use on_delete, not on_disconnect: NiceGUI 3 also invokes
-    # disconnect during the reconnect grace window, and clients stay in Client.instances
-    # until delete() runs after reconnect_timeout (see nicegui.client.Client.handle_disconnect).
-    async def shutdown_if_no_clients_left() -> None:
+    # When a browser session is torn down for real (surviving the reconnect
+    # window), release its coordinator leases and — if it was the last one —
+    # quit the server (and thus the PyApp process / macOS launcher).
+    # We use on_delete, not on_disconnect: NiceGUI 3 also invokes disconnect
+    # during the reconnect grace window, and clients stay in Client.instances
+    # until delete() runs after reconnect_timeout (see
+    # nicegui.client.Client.handle_disconnect).
+    async def on_client_gone(c: client.Client) -> None:
+        logic = _session_logic.pop(c.id, None)
+        if logic is not None:
+            try:
+                released = await logic.release_session_leases()
+                if released:
+                    logger.info(
+                        "Client %s gone; released %d card lease(s) back to the queue",
+                        c.id, released,
+                    )
+            except Exception:
+                logger.exception("Error releasing leases for client %s", c.id)
+
         await asyncio.sleep(1.0)
         if len(client.Client.instances) == 0:
             logger.info("Last browser session closed; shutting down")
             app.shutdown()
 
-    def schedule_shutdown_if_empty(_: client.Client) -> None:
-        asyncio.create_task(shutdown_if_no_clients_left())
+    def schedule_client_cleanup(c: client.Client) -> None:
+        asyncio.create_task(on_client_gone(c))
 
-    app.on_delete(schedule_shutdown_if_empty)
+    app.on_delete(schedule_client_cleanup)
 
     def open_browser():
         import webbrowser
