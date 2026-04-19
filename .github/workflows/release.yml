@@ -31,6 +31,8 @@ jobs:
       PYAPP_PYTHON_VERSION: "3.12"
       PYAPP_FULL_ISOLATION: "true"
       PYAPP_PIP_EXTERNAL: "true"
+      # PyApp + Swift launcher: keep linked min OS aligned with Info.plist (11.0) for Ventura etc.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
 
     steps:
       - name: Checkout

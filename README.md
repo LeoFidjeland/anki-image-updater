@@ -18,7 +18,7 @@ A graphical tool to help you find and update images for your Anki cards using Pe
     - **macOS (Apple Silicon, M1/M2/M3/…)**: `AnkiImageUpdater-macos-arm64.zip`
     - **macOS (Intel)**: `AnkiImageUpdater-macos-intel.zip`
     - **Windows (64-bit)**: `AnkiImageUpdater-windows-x64.exe`
-2. **macOS**: Unzip the download. You get **`Anki Image Updater.app`** — a normal Mac application. Drag it to **Applications** (optional), then open it from Finder like any other app.
+2. **macOS**: Unzip the download. You get **`Anki Image Updater.app`** — a normal Mac application. Drag it to **Applications** (optional), then open it from Finder like any other app. Releases target **macOS 11 and later** (including **Ventura 13**); use the **arm64** zip on Apple Silicon and the **Intel** zip on Intel Macs.
 3. **Windows**: Run **`AnkiImageUpdater-windows-x64.exe`** (double-click or place it anywhere you like). The download is **one file** that **embeds** the PyApp bootstrapper; on first run it writes `%LOCALAPPDATA%\anki-image-updater\pyapp\AnkiImageUpdaterPyApp.exe`. The `.exe` is **roughly PyApp’s size plus a small Rust shim** (there is **no .NET** runtime). The shim exits right after starting PyApp; **PyApp runs in its own console window**, where you see download/install progress on first launch and normal logs afterward.
 4. Make sure Anki is running.
 

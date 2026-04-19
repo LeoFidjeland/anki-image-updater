@@ -11,6 +11,9 @@
 set -euo pipefail
 # Avoid AppleDouble files (._*) in the zip when copying across filesystems.
 export COPYFILE_DISABLE=1
+# Match LSMinimumSystemVersion in Info.plist so swiftc doesn’t inherit a higher SDK default
+# (friend on macOS 13 / older releases would otherwise see “requires newer macOS”).
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "This script must run on macOS." >&2
