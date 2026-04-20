@@ -7,23 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 from search_providers import GRID_THUMB_MAX_DIM, ImageSearcher, _parse_freepik_source_size
 
 
-@pytest.fixture
-def mock_httpx(monkeypatch):
-    """Fixture to mock httpx.AsyncClient for search tests."""
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={})
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_response)
-
-    monkeypatch.setattr("httpx.AsyncClient", lambda **kwargs: mock_client)
-    return mock_client, mock_response
-
-
 @pytest.mark.asyncio
 async def test_search_pexels_no_key(mock_config):
     """Test that pexels search raises if no key."""

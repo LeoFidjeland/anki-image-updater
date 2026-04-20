@@ -1,0 +1,7 @@
+{
+    "_comment": "Copy to api_key_pools.json. Provider names must be lowercase: pexels, unsplash, freepik, pixabay. On startup the log shows counts (e.g. pixabay: 3 key(s)); each search logs entry N/M. If M is always 1, you only have one key in the pool for that provider.",
+    "pexels": [],
+    "unsplash": [],
+    "freepik": [],
+    "pixabay": []
+}

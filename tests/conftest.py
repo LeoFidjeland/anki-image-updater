@@ -8,7 +8,15 @@ from unittest.mock import MagicMock, AsyncMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config_manager import ConfigManager
+import api_key_pool
 import deck_coordinator
+
+
+@pytest.fixture(autouse=True)
+def _reset_api_key_pool_allocator():
+    api_key_pool.reset_allocator()
+    yield
+    api_key_pool.reset_allocator()
 
 
 @pytest.fixture(autouse=True)
@@ -49,3 +57,20 @@ def mock_httpx_get(monkeypatch):
     
     monkeypatch.setattr("httpx.AsyncClient", lambda **kwargs: mock_client)
     return mock_client
+
+
+@pytest.fixture
+def mock_httpx(monkeypatch):
+    """Mock ``httpx.AsyncClient`` for search tests (returns client + response)."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={})
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    monkeypatch.setattr("httpx.AsyncClient", lambda **kwargs: mock_client)
+    return mock_client, mock_response

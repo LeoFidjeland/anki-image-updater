@@ -14,6 +14,7 @@ from platformdirs import user_log_dir
 from nicegui import ui, app, client
 
 from config_manager import APP_NAME, AUTHOR, ConfigManager
+from api_key_pool import provider_has_credentials
 from anki_client import AnkiClient, AnkiConnectError
 from deck_coordinator import DEFAULT_HEARTBEAT_EVERY_S, new_session_id
 from search_providers import ImageSearcher
@@ -914,8 +915,11 @@ async def index_page():
     # won't cause a spurious release.
     ui.timer(DEFAULT_HEARTBEAT_EVERY_S, logic.heartbeat)
     
-    missing = [k for k in ["PEXELS_API_KEY", "UNSPLASH_ACCESS_KEY", "FREEPIK_API_KEY"] if not config.get(k)]
-    if len(missing) == 3:
+    if (
+        not provider_has_credentials(config, "pexels")
+        and not provider_has_credentials(config, "unsplash")
+        and not provider_has_credentials(config, "freepik")
+    ):
         ui.notify("Please configure API keys in Settings", type='warning', close_button=True, timeout=0)
 
     app_ui = AppUI(logic, searcher, args)
@@ -990,6 +994,14 @@ async def index_page():
                     ui.label("Could not fetch decks. Is Anki running?").classes('text-red-500')
 
 def start_app():
+    try:
+        from dotenv import load_dotenv
+
+        # Project / app code directory (same folder as this file), not cwd.
+        load_dotenv(Path(__file__).resolve().parent / ".env")
+    except ImportError:
+        pass
+
     # When a browser session is torn down for real (surviving the reconnect
     # window), release its coordinator leases and — if it was the last one —
     # quit the server (and thus the PyApp process / macOS launcher).

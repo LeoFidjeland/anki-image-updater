@@ -4,6 +4,7 @@ import logging
 import urllib.parse
 from collections import defaultdict
 
+from api_key_pool import resolve_api_key
 from image_sizing import (
     GRID_THUMB_MAX_DIM,
     SAVE_MAX_DIM,
@@ -164,11 +165,17 @@ class ImageSearcher:
             return await self.search_wikimedia(query, count, page)
         raise ValueError(f"Unknown provider: {provider}")
 
+    def _require_api_key(self, provider: str, missing_message: str) -> str:
+        key = resolve_api_key(self.config, provider)
+        if not key:
+            raise ValueError(missing_message)
+        return key
+
     async def search_pexels(self, query, count=1, page=1):
         """Searches Pexels."""
-        api_key = self.config.get("PEXELS_API_KEY")
-        if not api_key:
-            raise ValueError("Pexels API key is missing. Please add it in Settings.")
+        api_key = self._require_api_key(
+            "pexels", "Pexels API key is missing. Please add it in Settings."
+        )
 
         headers = {"Authorization": api_key}
         url = f"https://api.pexels.com/v1/search?query={query}&per_page={count}&page={page}"
@@ -193,9 +200,9 @@ class ImageSearcher:
 
     async def search_unsplash(self, query, count=1, page=1):
         """Searches Unsplash."""
-        access_key = self.config.get("UNSPLASH_ACCESS_KEY")
-        if not access_key:
-            raise ValueError("Unsplash API key is missing. Please add it in Settings.")
+        access_key = self._require_api_key(
+            "unsplash", "Unsplash API key is missing. Please add it in Settings."
+        )
 
         headers = {"Authorization": f"Client-ID {access_key}"}
         url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}&page={page}"
@@ -220,9 +227,9 @@ class ImageSearcher:
 
     async def search_freepik(self, query, count=1, page=1):
         """Searches Freepik."""
-        api_key = self.config.get("FREEPIK_API_KEY")
-        if not api_key:
-            raise ValueError("Freepik API key is missing. Please add it in Settings.")
+        api_key = self._require_api_key(
+            "freepik", "Freepik API key is missing. Please add it in Settings."
+        )
 
         headers = {"x-freepik-api-key": api_key}
         params = {
@@ -265,9 +272,9 @@ class ImageSearcher:
 
     async def search_pixabay(self, query, count=1, page=1):
         """Searches Pixabay (https://pixabay.com/api/docs/)."""
-        api_key = self.config.get("PIXABAY_API_KEY")
-        if not api_key:
-            raise ValueError("Pixabay API key is missing. Please add it in Settings.")
+        api_key = self._require_api_key(
+            "pixabay", "Pixabay API key is missing. Please add it in Settings."
+        )
 
         per_page = max(3, min(count, 200))
         params = {
